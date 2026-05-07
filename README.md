@@ -34,7 +34,9 @@
   - `SET`
   - `GET`
   - `EXIST`
+  - `EXISTS`
   - `DEL`
+  - `ECHO`
 
 ## 技术栈
 
@@ -147,6 +149,18 @@ Success response: 1
 Success response: 0
 ```
 
+### EXISTS
+
+```powershell
+cargo run --bin client -- --cmd "EXISTS test1 test2 test3"
+```
+
+预期返回已缓存的key的数量
+
+```text
+Success response: 3
+```
+
 ### DEL
 
 ```powershell
@@ -157,6 +171,18 @@ cargo run --bin client -- --cmd "DEL name"
 
 ```text
 Success response: 1
+```
+
+### ECHO
+
+```powshell
+cargo run --bin client -- --cmd "ECHO hello my-redis"
+```
+
+预期返回ECHO后的消息
+
+```text
+Success response: hello my-redis
 ```
 
 ## 项目结构
@@ -236,7 +262,9 @@ Arc<RwLock<HashMap<String, String>>>
 - `SET key value`：写入数据
 - `GET key`：读取数据
 - `PING`：测试连接
+- `ECHO hello`：测试连接
 - `EXIST key`：判断 key 是否存在
+- `EXISTS key1 key2 key3`：判断多个key是否存在
 - `DEL key...`：删除一个或多个 key
 
 这部分逻辑可以帮助理解 Redis 命令处理的大致流程。
@@ -253,14 +281,11 @@ Arc<RwLock<HashMap<String, String>>>
 - 暂未实现主从复制和集群
 - 暂未实现 Redis 的完整命令集和完整错误处理
 
-另外，当前 README 没有展示 `ECHO` 命令示例，因为现有代码中的 `ECHO` 分支还需要进一步修正。
 
 ## 后续计划
 
 后面可以继续尝试实现：
 
-- 修正并补充 `ECHO` 命令
-- 增加 `EXISTS` 命令命名兼容
 - 增加 key 过期时间支持
 - 增加更多字符串命令，例如 `INCR`、`DECR`、`APPEND`
 - 为 RESP 编解码模块补充单元测试

@@ -2,6 +2,8 @@ pub mod db;
 pub mod resp;
 // use db::*;
 
+use std::ascii::AsciiExt;
+use std::fmt::Debug;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -76,8 +78,8 @@ async  fn main() {
                         }
                     }else if text.len() >= 1 && text[0].eq_ignore_ascii_case("echo"){
                         if text.len() == 2{
-                            let msg = text[2].as_str();
-                            let resp = format!("${}\r\n{}\r\n",msg.len(),msg);
+                            let msg = text[1].as_str();
+                            let resp = format!("${}\r\n{}\r\n",msg.as_bytes().len(),msg);
                             writer.write_all(resp.as_bytes()).await.unwrap();
                         }else{
                             writer.write_all(b"-ERR wrong number of arguments for 'echo' command\r\n").await.unwrap();
@@ -89,7 +91,16 @@ async  fn main() {
                         }else{
                             writer.write_all(b":0\r\n").await.expect("exist won't fail");
                         }
-                    }else if text.len() >= 2 && text[0].eq_ignore_ascii_case("del") {
+                    }else if text.len() >= 2 && text[0].eq_ignore_ascii_case("exists"){
+                        let mut exi_cnt = 0;
+                        for key in &text[1..]{
+                            if cur_db.read().await.contains_key(key){
+                                exi_cnt += 1;
+                            }
+                        }
+                        let resp = format!(":{exi_cnt}\r\n");
+                        writer.write_all(resp.as_bytes()).await.expect("exists");
+                    } else if text.len() >= 2 && text[0].eq_ignore_ascii_case("del") {
                         let mut write = cur_db.write().await;
                         let count = text[1..].iter().filter(|x| {
                             write.remove(*x).is_some()
