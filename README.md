@@ -120,7 +120,7 @@ Success response: 1
 启动服务端：
 
 ```powershell
-cargo run --bin my-redis -- --addr 127.0.0.1 --port 6379
+cargo run -- --addr 127.0.0.1 --port 6379
 ```
 
 另开一个终端运行客户端：
@@ -133,7 +133,7 @@ cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "GET name"
 如果 6379 端口被占用，可以换端口：
 
 ```powershell
-cargo run --bin my-redis -- --port 6380
+cargo run --bin server -- --port 6380
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "PING"
 ```
 
@@ -151,17 +151,26 @@ cargo check
 cargo test
 ```
 
+只运行命令分发模块测试：
+
+```powershell
+cargo test --lib cmd::cmd
+```
+
 当前单元测试覆盖：
 
 - 未过期 key 可以读取
 - 过期 key 会返回 `None` 并被清理
 - `EXISTS` 可以统计多个 key
 - `DEL` 只统计实际存在且未过期的 key
+- `SET key value EX seconds` 支持大写 `EX` 并能正确过期
+- `PING message` 返回传入的 message
+- `DEL` 命令会真正删除 key
 
 手动验证过期时间：
 
 ```powershell
-cargo run --bin my-redis -- --port 6380
+cargo run --bin server -- --port 6380
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET temp redis PX 500"
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
 Start-Sleep -Milliseconds 600
@@ -181,15 +190,16 @@ my-redis
 ├── Cargo.toml
 ├── README.md
 └── src
-    ├── main.rs          # 服务端入口和命令分发
     ├── lib.rs
     ├── bin
-    │   └── client.rs    # 简单命令行客户端
+    │   ├── client.rs    # 简单命令行客户端
+    │   └── server.rs    # 服务端入口和命令分发
     ├── db
     │   ├── mod.rs
     │   └── db.rs        # 内存数据库、过期时间和 key 操作
     ├── cmd
-    │   └── mod.rs
+    │   ├── mod.rs
+    │   └── cmd.rs       # 命令分发和命令语义
     └── resp
         ├── mod.rs
         └── resp.rs      # RESP 编码和解码
@@ -214,9 +224,14 @@ struct Entry {
 - `EXISTS` 发现 key 过期时删除且不计数
 - `DEL` 删除过期 key 时不计入删除数量
 
+命令处理流程：
+
+- `src/bin/server.rs` 负责监听 TCP 连接、解析 RESP 请求并写回响应
+- `src/cmd/cmd.rs` 负责命令分发和 `PING`、`ECHO`、`SET`、`GET`、`EXISTS`、`DEL` 的语义
+- `src/bin/client.rs` 负责把命令行输入编码成 RESP 请求并解析服务端响应
+
 ## 后续可以优化
 
-- 把命令分发从 `main.rs` 拆到 `cmd` 模块，降低主函数复杂度
 - 给 RESP 编解码增加单元测试，覆盖非法协议和 bulk string 边界
 - 支持更多 Redis `SET` 参数，例如 `NX`、`XX`、`KEEPTTL`
 - 支持 `EXPIRE`、`TTL`、`PERSIST` 等过期时间相关命令

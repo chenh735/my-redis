@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use std::string::ToString;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 pub async fn decode_request<R>(read: &mut BufReader<R>) -> Result<Option<Vec<String>>>
@@ -34,7 +35,7 @@ where
     Ok(Some(ans))
 }
 
-pub async fn encode_request(request: Vec<String>) -> Result<Option<String>> {
+pub fn encode_request(request: Vec<String>) -> Result<Option<String>> {
     let mut ans = format!("*{}\r\n", request.len());
     for x in &request {
         let next = format!("${}\r\n{}\r\n", x.len(), x);
@@ -72,4 +73,28 @@ where
         }
     };
     ans
+}
+
+pub fn bulk(msg: String) -> String {
+    format!("${}\r\n{msg}\r\n", msg.as_bytes().len())
+}
+
+pub fn integer(num: i32) -> String {
+    format!(":{num}\r\n")
+}
+
+pub fn nil() -> String {
+    "$-1\r\n".to_string()
+}
+
+pub fn simple(msg: String) -> String {
+    format!("+{msg}\r\n")
+}
+
+pub fn error(msg: String) -> String {
+    format!("-ERR {msg}\r\n")
+}
+
+pub fn syntax_error() -> String {
+    error("syntax error".to_string())
 }

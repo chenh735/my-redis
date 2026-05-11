@@ -2,6 +2,7 @@
 name = "my-redis"
 version = "0.1.0"
 edition = "2024"
+default-run = "server"
 
 [dependencies]
 clap = {version = "4.5.55", features = ["derive"]}
