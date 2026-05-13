@@ -1,7 +1,7 @@
 use crate::db::Db;
 use crate::resp::resp::{bulk, integer, nil, simple, syntax_error};
 use anyhow::{Result, bail};
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 pub async fn dispatch(db: Db, args: Vec<String>) -> String {
     match args[0].to_ascii_lowercase().as_str() {
@@ -33,7 +33,7 @@ fn echo(args: Vec<String>) -> String {
     }
 }
 
-fn expires_at(unit: &str, number: &str) -> Result<Instant> {
+fn expires_at(unit: &str, number: &str) -> Result<SystemTime> {
     let number = match number.parse::<u64>() {
         Ok(number) => number,
         Err(_) => {
@@ -41,11 +41,15 @@ fn expires_at(unit: &str, number: &str) -> Result<Instant> {
         }
     };
 
-    match unit.to_ascii_lowercase().as_str() {
-        "ex" => Ok(Instant::now() + Duration::from_secs(number)),
-        "px" => Ok(Instant::now() + Duration::from_millis(number)),
+    let duration = match unit.to_ascii_lowercase().as_str() {
+        "ex" => Duration::from_secs(number),
+        "px" => Duration::from_millis(number),
         _ => bail!("expires_at2"),
-    }
+    };
+
+    SystemTime::now()
+        .checked_add(duration)
+        .ok_or_else(|| anyhow::anyhow!("expires_at3"))
 }
 
 async fn set(db: Db, args: Vec<String>) -> String {
@@ -104,7 +108,8 @@ async fn exists(db: Db, args: Vec<String>) -> String {
 mod tests {
     use super::dispatch;
     use crate::db::Db;
-    use tokio::time::{Duration, sleep};
+    use std::time::Duration;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn set_get_and_expire_accept_uppercase_units() {

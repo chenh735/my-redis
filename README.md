@@ -244,7 +244,7 @@ struct Entry {
 
 `expires_at = None` 表示永不过期，`Some(Instant)` 表示到达该时间后过期。
 
-过期删除采用“惰性删除 + 后台定时清理”的组合策略：
+过期的组合策略：
 
 - `GET` 发现 key 过期时删除并返回 nil
 - `EXISTS` 发现 key 过期时删除且不计数

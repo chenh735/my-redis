@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use tokio::time::{Instant, interval, Duration};
+use tokio::time::interval;
+
+
 
 #[derive(Clone, Debug)]
 struct Entry {
     value: String,
-    expires_at: Option<Instant>,
+    expires_at: Option<SystemTime>,
 }
 
 #[derive(Clone)]
@@ -17,7 +20,7 @@ pub struct Db {
 impl Entry {
     fn is_expired(&self) -> bool {
         self.expires_at
-            .is_some_and(|expires_at| Instant::now() >= expires_at)
+            .is_some_and(|expires_at| SystemTime::now() >= expires_at)
     }
 }
 
@@ -40,7 +43,7 @@ impl Db {
         }
     }
 
-    pub async fn set_key(&self, key: &str, value: String, expires_at: Option<Instant>) {
+    pub async fn set_key(&self, key: &str, value: String, expires_at: Option<SystemTime>) {
         let value = Entry { value, expires_at };
         self.inner.write().await.insert(key.to_string(), value);
     }
@@ -104,7 +107,8 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::Db;
-    use tokio::time::{Duration, Instant, sleep};
+    use std::time::{Duration, SystemTime};
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn get_key_returns_value_before_expiration() {
@@ -112,7 +116,7 @@ mod tests {
         db.set_key(
             "name",
             "redis".to_string(),
-            Some(Instant::now() + Duration::from_secs(10)),
+            Some(SystemTime::now() + Duration::from_secs(10)),
         )
         .await;
 
@@ -125,7 +129,7 @@ mod tests {
         db.set_key(
             "name",
             "redis".to_string(),
-            Some(Instant::now() + Duration::from_millis(10)),
+            Some(SystemTime::now() + Duration::from_millis(10)),
         )
         .await;
 
