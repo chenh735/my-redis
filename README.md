@@ -157,6 +157,12 @@ cargo test
 cargo test --lib cmd::cmd
 ```
 
+只运行 RESP 编解码模块测试：
+
+```powershell
+cargo test --lib resp::resp
+```
+
 当前单元测试覆盖：
 
 - 未过期 key 可以读取
@@ -166,6 +172,10 @@ cargo test --lib cmd::cmd
 - `SET key value EX seconds` 支持大写 `EX` 并能正确过期
 - `PING message` 返回传入的 message
 - `DEL` 命令会真正删除 key
+- RESP 请求编码覆盖空数组和空 bulk string
+- RESP bulk string 编码按字节长度处理非 ASCII 文本
+- RESP 请求解析覆盖空数组、空 bulk string、非法协议和 bulk string 缺少 `\r\n` 的边界
+- RESP 响应解析覆盖空 bulk string、Null Bulk String、非法协议和 bulk string 缺少 `\r\n` 的边界
 
 手动验证过期时间：
 
@@ -232,7 +242,6 @@ struct Entry {
 
 ## 后续可以优化
 
-- 给 RESP 编解码增加单元测试，覆盖非法协议和 bulk string 边界
 - 支持更多 Redis `SET` 参数，例如 `NX`、`XX`、`KEEPTTL`
 - 支持 `EXPIRE`、`TTL`、`PERSIST` 等过期时间相关命令
 - 增加后台清理任务，定期删除过期 key
