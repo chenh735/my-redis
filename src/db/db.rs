@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::Instant;
+use tokio::time::{Instant, interval, Duration};
 
 #[derive(Clone, Debug)]
 struct Entry {
@@ -76,7 +76,30 @@ impl Db {
 
         count
     }
+
+    async fn clean_up_keys(&self) {
+        let mut db = self.inner.write().await;
+        db.retain(|_key, entry| {
+           !entry.is_expired()
+        });
+    }
+
+    pub fn start_clean_up_keys(&self) {
+        let mut tick = interval(Duration::from_secs(1));
+        let db = self.clone();
+
+        tokio::spawn({
+            async move {
+                loop {
+                    tick.tick().await;
+                    db.clean_up_keys().await;
+                }
+            }
+        });
+    }
 }
+
+
 
 #[cfg(test)]
 mod tests {

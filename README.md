@@ -11,7 +11,8 @@
 - RESP 请求编码、请求解析和响应解析
 - 并发共享数据库：`Arc<RwLock<HashMap<String, Entry>>>`
 - key 过期时间：支持 `SET key value EX seconds` 和 `SET key value PX milliseconds`
-- 惰性过期删除：访问 key 时发现过期才删除
+- 惰性过期删除：`GET` / `EXISTS` / `DEL` 访问 key 时发现过期会立即清理
+- 后台定时清理：server 启动后每 1 秒扫描并删除过期 key
 
 ## 支持的命令
 
@@ -193,6 +194,21 @@ cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
 Success response: nil
 ```
 
+手动验证后台定时清理：
+
+```powershell
+cargo run --bin server -- --port 6380
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET temp redis PX 500"
+Start-Sleep -Seconds 2
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
+```
+
+后台任务每 1 秒清理一次过期 key，最后一次 `GET temp` 应该显示：
+
+```text
+Success response: nil
+```
+
 ## 项目结构
 
 ```text
@@ -228,11 +244,14 @@ struct Entry {
 
 `expires_at = None` 表示永不过期，`Some(Instant)` 表示到达该时间后过期。
 
-过期删除采用惰性策略：
+过期删除采用“惰性删除 + 后台定时清理”的组合策略：
 
 - `GET` 发现 key 过期时删除并返回 nil
 - `EXISTS` 发现 key 过期时删除且不计数
 - `DEL` 删除过期 key 时不计入删除数量
+- `src/bin/server.rs` 在创建 `Db` 后调用 `db.start_clean_up_keys()` 启动后台清理任务
+- `Db::start_clean_up_keys` 内部使用 `tokio::spawn` 运行后台循环，不会阻塞 TCP accept 循环
+- 后台清理任务每 1 秒获取 `RwLock` 写锁，并用 `HashMap::retain` 删除已经过期的 entry
 
 命令处理流程：
 
@@ -244,5 +263,4 @@ struct Entry {
 
 - 支持更多 Redis `SET` 参数，例如 `NX`、`XX`、`KEEPTTL`
 - 支持 `EXPIRE`、`TTL`、`PERSIST` 等过期时间相关命令
-- 增加后台清理任务，定期删除过期 key
 - 客户端目前用空白字符拆分命令，暂不适合发送包含空格的单个参数

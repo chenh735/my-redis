@@ -22,8 +22,9 @@ async fn main() {
         .await
         .expect("TcpListener bind failed");
     println!("{}:{} server started", args.addr, args.port);
-
     let db = Db::new();
+    db.start_clean_up_keys();
+
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         let cur_db = db.clone();
