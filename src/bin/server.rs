@@ -1,10 +1,13 @@
 use clap::Parser;
 use my_redis::cmd::cmd::dispatch;
 use my_redis::db::Db;
+use my_redis::persist::{Aof, is_write_command};
 use my_redis::resp::resp::decode_request;
 use std::fmt::Debug;
+use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -23,11 +26,18 @@ async fn main() {
         .expect("TcpListener bind failed");
     println!("{}:{} server started", args.addr, args.port);
     let db = Db::new();
+    Aof::load("appendonly.aof", db.clone())
+        .await
+        .expect("load AOF failed");
+    let aof = Arc::new(Mutex::new(
+        Aof::open("appendonly.aof").await.expect("open AOF failed"),
+    ));
     db.start_clean_up_keys();
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         let cur_db = db.clone();
+        let cur_aof = aof.clone();
         tokio::spawn({
             async move {
                 let (reader, mut writer) = socket.into_split();
@@ -49,7 +59,13 @@ async fn main() {
                     if text.is_empty() {
                         break;
                     }
-                    let response = dispatch(cur_db.clone(), text).await;
+                    let mut response = dispatch(cur_db.clone(), text.clone()).await;
+                    if is_write_command(&text) && !response.starts_with('-') {
+                        if let Err(e) = cur_aof.lock().await.append(&text).await {
+                            eprintln!("AOF append error:{e}");
+                            response = "-ERR persistence error\r\n".to_string();
+                        }
+                    }
                     writer.write_all(response.as_bytes()).await.expect("main");
                 }
             }

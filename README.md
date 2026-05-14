@@ -2,7 +2,7 @@
 
 `my-redis` 是一个用 Rust 和 Tokio 实现的简化版 Redis 服务端，用来练习 RESP 协议解析、TCP 客户端/服务端通信、并发共享状态和基础 Redis 命令语义。
 
-当前实现是内存型 key-value 存储，数据不会持久化到磁盘。
+当前实现支持内存型 key-value 存储，并通过 AOF 文件把写命令持久化到磁盘。
 
 ## 功能
 
@@ -13,6 +13,8 @@
 - key 过期时间：支持 `SET key value EX seconds` 和 `SET key value PX milliseconds`
 - 惰性过期删除：`GET` / `EXISTS` / `DEL` 访问 key 时发现过期会立即清理
 - 后台定时清理：server 启动后每 1 秒扫描并删除过期 key
+- AOF 持久化：`SET` / `DEL` 成功执行后以 RESP 格式追加写入 `appendonly.aof`
+- 启动恢复：server 启动时加载并重放 `appendonly.aof` 中的写命令
 
 ## 支持的命令
 
@@ -116,6 +118,33 @@ Success response: 1
 
 过期 key 不计入删除数量。
 
+## 持久化
+
+项目使用简化版 AOF 持久化。服务端启动时会先读取 `appendonly.aof`，解析其中的 RESP 命令并重放到内存数据库；运行期间，`SET` 和 `DEL` 执行成功后会追加写入同一个文件。
+
+AOF 文件保存的是 RESP 请求格式，而不是普通文本命令。例如：
+
+```text
+SET name redis
+```
+
+会写入：
+
+```text
+*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$5\r\nredis\r\n
+```
+
+当前只会持久化写命令：
+
+- `SET key value`
+- `SET key value EX seconds`
+- `SET key value PX milliseconds`
+- `DEL key [key ...]`
+
+`GET`、`EXISTS`、`PING`、`ECHO` 不会写入 AOF。
+
+注意：当前 AOF 会保存原始 `SET ... EX/PX` 命令。服务重启后重放这类命令时，key 会重新获得对应的相对过期时间；后续可以扩展为 `PXAT` 这类绝对过期时间格式来更精确地还原 TTL。
+
 ## 运行
 
 启动服务端：
@@ -136,6 +165,35 @@ cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "GET name"
 ```powershell
 cargo run --bin server -- --port 6380
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "PING"
+```
+
+手动验证持久化：
+
+```powershell
+Remove-Item .\appendonly.aof -ErrorAction SilentlyContinue
+cargo run --bin server -- --port 6380
+```
+
+另开一个终端写入数据：
+
+```powershell
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET name redis"
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET age 18"
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "DEL age"
+```
+
+停止并重启 server 后验证：
+
+```powershell
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET name"
+cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET age"
+```
+
+预期结果：
+
+```text
+Success response: redis
+Success response: nil
 ```
 
 ## 测试
@@ -177,6 +235,9 @@ cargo test --lib resp::resp
 - RESP bulk string 编码按字节长度处理非 ASCII 文本
 - RESP 请求解析覆盖空数组、空 bulk string、非法协议和 bulk string 缺少 `\r\n` 的边界
 - RESP 响应解析覆盖空 bulk string、Null Bulk String、非法协议和 bulk string 缺少 `\r\n` 的边界
+- AOF 解析覆盖多条 RESP 请求、空 bulk string 和非法协议
+- AOF 写入覆盖 RESP 格式追加
+- AOF 加载覆盖启动时重放 `SET` / `DEL`
 
 手动验证过期时间：
 
@@ -226,6 +287,10 @@ my-redis
     ├── cmd
     │   ├── mod.rs
     │   └── cmd.rs       # 命令分发和命令语义
+    ├── persist
+    │   ├── mod.rs
+    │   ├── parse.rs     # AOF 中 RESP 命令数组解析
+    │   └── persistence.rs # AOF 打开、追加和加载
     └── resp
         ├── mod.rs
         └── resp.rs      # RESP 编码和解码
@@ -238,11 +303,11 @@ my-redis
 ```rust
 struct Entry {
     value: String,
-    expires_at: Option<Instant>,
+    expires_at: Option<SystemTime>,
 }
 ```
 
-`expires_at = None` 表示永不过期，`Some(Instant)` 表示到达该时间后过期。
+`expires_at = None` 表示永不过期，`Some(SystemTime)` 表示到达该系统时间后过期。
 
 过期的组合策略：
 
@@ -258,9 +323,19 @@ struct Entry {
 - `src/bin/server.rs` 负责监听 TCP 连接、解析 RESP 请求并写回响应
 - `src/cmd/cmd.rs` 负责命令分发和 `PING`、`ECHO`、`SET`、`GET`、`EXISTS`、`DEL` 的语义
 - `src/bin/client.rs` 负责把命令行输入编码成 RESP 请求并解析服务端响应
+- `src/persist/persistence.rs` 负责打开 AOF、追加写命令、启动时加载 AOF
+- `src/persist/parse.rs` 负责解析 AOF 文件中的 RESP 命令数组
+
+持久化流程：
+
+- server 启动时先创建 `Db`，再调用 `Aof::load("appendonly.aof", db.clone())` 重放历史写命令
+- server 使用 `Arc<Mutex<Aof>>` 在多个连接任务之间共享 AOF 句柄，并保证同一时间只有一个任务写文件
+- 每个请求先通过 `dispatch` 执行；如果命令是 `SET` / `DEL` 且响应不是错误，再调用 `Aof::append(&args)` 追加写入
 
 ## 后续可以优化
 
 - 支持更多 Redis `SET` 参数，例如 `NX`、`XX`、`KEEPTTL`
 - 支持 `EXPIRE`、`TTL`、`PERSIST` 等过期时间相关命令
+- 支持 AOF rewrite，压缩重复写命令生成更小的持久化文件
+- 将过期时间持久化为绝对时间，避免重启后相对 TTL 被重新计算
 - 客户端目前用空白字符拆分命令，暂不适合发送包含空格的单个参数
