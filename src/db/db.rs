@@ -4,8 +4,6 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 
-
-
 #[derive(Clone, Debug)]
 struct Entry {
     value: String,
@@ -82,9 +80,7 @@ impl Db {
 
     async fn clean_up_keys(&self) {
         let mut db = self.inner.write().await;
-        db.retain(|_key, entry| {
-           !entry.is_expired()
-        });
+        db.retain(|_key, entry| !entry.is_expired());
     }
 
     pub fn start_clean_up_keys(&self) {
@@ -101,8 +97,6 @@ impl Db {
         });
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
