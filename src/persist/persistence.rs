@@ -4,8 +4,11 @@ use crate::persist::parse::parse_array;
 use crate::resp::resp::encode_request;
 use anyhow::{Context, Result, bail};
 use std::io::ErrorKind;
+use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
+use tokio::time::{Duration, interval};
 
 pub struct Aof {
     file: File,
@@ -26,7 +29,6 @@ impl Aof {
     pub async fn append(&mut self, args: &[String]) -> Result<()> {
         let content = encode_request(args.to_vec())?.context("encode empty AOF request")?;
         self.file.write_all(content.as_bytes()).await?;
-        self.file.flush().await?;
         Ok(())
     }
 
@@ -56,6 +58,11 @@ impl Aof {
 
         Ok(())
     }
+
+    pub async fn flush(&mut self) -> Result<()> {
+        self.file.flush().await?;
+        Ok(())
+    }
 }
 
 pub fn is_write_command(args: &[String]) -> bool {
@@ -63,6 +70,17 @@ pub fn is_write_command(args: &[String]) -> bool {
         .is_some_and(|cmd| matches!(cmd.to_ascii_lowercase().as_str(), "set" | "del"))
 }
 
+pub fn tick_flush(sec: u64, aof: Arc<Mutex<Aof>>) {
+    let mut interval = interval(Duration::from_secs(sec));
+    tokio::spawn(async move {
+        loop {
+            interval.tick().await;
+            if let Err(e) = aof.lock().await.flush().await {
+                eprintln!("AOF flush error: {e}");
+            };
+        }
+    });
+}
 #[cfg(test)]
 mod tests {
     use super::{Aof, is_write_command};

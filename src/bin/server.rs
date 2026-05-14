@@ -1,7 +1,7 @@
 use clap::Parser;
 use my_redis::cmd::cmd::dispatch;
 use my_redis::db::Db;
-use my_redis::persist::{Aof, is_write_command};
+use my_redis::persist::{Aof, is_write_command, tick_flush};
 use my_redis::resp::resp::decode_request;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -32,6 +32,7 @@ async fn main() {
     let aof = Arc::new(Mutex::new(
         Aof::open("appendonly.aof").await.expect("open AOF failed"),
     ));
+    tick_flush(2, aof.clone());
     db.start_clean_up_keys();
 
     loop {
