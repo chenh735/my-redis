@@ -68,6 +68,37 @@ where
             }
             Ok(Some(String::from_utf8(buf[..num].to_vec())?))
         }
+        Some(b'*') => {
+            let count: usize = cur_line[1..].parse()?;
+            let mut values = Vec::with_capacity(count);
+
+            for _ in 0..count {
+                line.clear();
+                read.read_line(&mut line).await.expect("decode_response4");
+                let cur_line = line.trim_end_matches("\r\n");
+
+                match cur_line.as_bytes().first() {
+                    Some(b'+') | Some(b'-') | Some(b':') => values.push(cur_line[1..].to_string()),
+                    Some(b'$') => {
+                        let num: i32 = cur_line[1..].parse()?;
+                        if num == -1 {
+                            values.push("nil".to_string());
+                            continue;
+                        }
+                        let num = num as usize;
+                        let mut buf = vec![0u8; num + 2];
+                        read.read_exact(&mut buf).await.expect("decode_response5");
+                        if &buf[num..] != b"\r\n" {
+                            bail!(format!("decode_response6:{:?}", buf))
+                        }
+                        values.push(String::from_utf8(buf[..num].to_vec())?);
+                    }
+                    _ => bail!("invalid array response item:{line:?}"),
+                }
+            }
+
+            Ok(Some(values.join(" ")))
+        }
         _ => {
             bail!("invalid response:{line:?}");
         }
@@ -77,6 +108,14 @@ where
 
 pub fn bulk(msg: String) -> String {
     format!("${}\r\n{msg}\r\n", msg.as_bytes().len())
+}
+
+pub fn array(items: Vec<String>) -> String {
+    let mut response = format!("*{}\r\n", items.len());
+    for item in items {
+        response.push_str(&bulk(item));
+    }
+    response
 }
 
 pub fn integer(num: i32) -> String {
@@ -179,5 +218,22 @@ mod tests {
     async fn decode_response_rejects_bulk_string_without_crlf_suffix() {
         let err = decode_response_from(b"$3\r\nabcxx").await;
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn array_encodes_bulk_string_items() {
+        assert_eq!(
+            array(vec!["age".to_string(), "18".to_string()]),
+            "*2\r\n$3\r\nage\r\n$2\r\n18\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn decode_response_accepts_array_of_bulk_strings() {
+        let response = decode_response_from(b"*2\r\n$3\r\nage\r\n$2\r\n18\r\n")
+            .await
+            .unwrap();
+
+        assert_eq!(response, Some("age 18".to_string()));
     }
 }

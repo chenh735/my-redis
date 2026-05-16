@@ -66,8 +66,12 @@ impl Aof {
 }
 
 pub fn is_write_command(args: &[String]) -> bool {
-    args.first()
-        .is_some_and(|cmd| matches!(cmd.to_ascii_lowercase().as_str(), "set" | "del"))
+    args.first().is_some_and(|cmd| {
+        matches!(
+            cmd.to_ascii_lowercase().as_str(),
+            "set" | "del" | "lpush" | "rpush" | "lpop" | "rpop" | "sadd" | "srem" | "hset" | "hdel"
+        )
+    })
 }
 
 pub fn tick_flush(sec: u64, aof: Arc<Mutex<Aof>>) {
@@ -99,10 +103,20 @@ mod tests {
     }
 
     #[test]
-    fn is_write_command_accepts_set_and_del_only() {
+    fn is_write_command_accepts_mutating_commands_only() {
         assert!(is_write_command(&["SET".to_string(), "name".to_string()]));
         assert!(is_write_command(&["del".to_string(), "name".to_string()]));
+        assert!(is_write_command(&[
+            "LPUSH".to_string(),
+            "items".to_string()
+        ]));
+        assert!(is_write_command(&["SADD".to_string(), "tags".to_string()]));
+        assert!(is_write_command(&["HSET".to_string(), "user".to_string()]));
         assert!(!is_write_command(&["GET".to_string(), "name".to_string()]));
+        assert!(!is_write_command(&[
+            "LRANGE".to_string(),
+            "items".to_string()
+        ]));
         assert!(!is_write_command(&[]));
     }
 
