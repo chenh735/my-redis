@@ -103,6 +103,52 @@ impl Db {
         count
     }
 
+    pub async fn get_str_len(&self, key: &str) -> DbResult<usize>{
+        let mut write = self.inner.write().await;
+        if write.get(key).is_some_and(Entry::is_expired) {
+            write.remove(key);
+        }
+
+        match write.get(key) {
+            Some(entry) => {
+                match &entry.value {
+                    Value::String(value) => {
+                        Ok(value.len())
+                    },
+                    _ => Err(DbError::WrongType)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    pub async fn string_append_str(&self, key: &str, value: &str) -> DbResult<usize>{
+        let mut write = self.inner.write().await;
+        if write.get(key).is_some_and(Entry::is_expired) {
+            write.remove(key);
+        }
+
+        match write.get_mut(key) {
+            Some(entry) =>{
+                match  &mut entry.value{
+                    Value::String(v) =>{
+                        v.push_str(value);
+                        Ok(v.len())
+                    },
+                    _ => Err(DbError::WrongType)
+                }
+            }
+            None => {
+                write.insert(key.to_string(), Entry{
+                    value: Value::String(value.to_string()),
+                    expires_at: None
+                });
+                Ok(value.len())
+            }
+        }
+
+    }
+
     pub async fn push_list(&self, key: &str, values: &[String], left: bool) -> DbResult<usize> {
         let mut write = self.inner.write().await;
         if write.get(key).is_some_and(Entry::is_expired) {
@@ -308,6 +354,159 @@ impl Db {
                 );
                 Ok(count)
             }
+        }
+    }
+
+    pub async fn set_get_inter(&self, keys: &[String]) -> DbResult<Vec<String>> {
+        let read = self.inner.read().await;
+        for key in keys{
+            match read.get(key) {
+                Some(entry) =>{
+                    if entry.is_expired() || !matches!(entry.value, Value::Set(_)){
+                        return Ok(Vec::new())
+                    }
+                },
+                None => return Ok(Vec::new())
+            }
+        };
+
+        let ans = read.get(&keys[0]).unwrap().value.clone();
+        match ans {
+            Value::Set(mut values) =>{
+                for key in &keys[1..]{
+                    match &read.get(key).unwrap().value {
+                        Value::Set(cur_hash) => {
+                            values = values.intersection(cur_hash).cloned().collect();
+                        },
+                        _ => return Err(DbError::WrongType)
+                    }
+                };
+                Ok(values.into_iter().collect())
+            },
+            _ => Err(DbError::WrongType)
+        }
+    }
+
+    pub async fn set_get_union(&self, keys: &[String]) -> DbResult<Vec<String>> {
+        let mut write = self.inner.write().await;
+        for key in keys {
+            if write.get(key).is_some_and(Entry::is_expired) {
+                write.remove(key);
+            }
+        }
+
+        let mut values = HashSet::new();
+        for key in keys {
+            match write.get(key) {
+                Some(entry) => match &entry.value {
+                    Value::Set(set) => values.extend(set.iter().cloned()),
+                    _ => return Err(DbError::WrongType),
+                },
+                None => {}
+            }
+        }
+
+        let mut values: Vec<_> = values.into_iter().collect();
+        values.sort();
+        Ok(values)
+    }
+
+    pub async fn set_get_diff(&self, keys: &[String]) -> DbResult<Vec<String>> {
+        let mut write = self.inner.write().await;
+        for key in keys {
+            if write.get(key).is_some_and(Entry::is_expired) {
+                write.remove(key);
+            }
+        }
+
+        let mut values = match write.get(&keys[0]) {
+            Some(entry) => match &entry.value {
+                Value::Set(set) => set.clone(),
+                _ => return Err(DbError::WrongType),
+            },
+            None => return Ok(Vec::new()),
+        };
+
+        for key in &keys[1..] {
+            match write.get(key) {
+                Some(entry) => match &entry.value {
+                    Value::Set(set) => values.retain(|value| !set.contains(value)),
+                    _ => return Err(DbError::WrongType),
+                },
+                None => {}
+            }
+        }
+
+        let mut values: Vec<_> = values.into_iter().collect();
+        values.sort();
+        Ok(values)
+    }
+
+    pub async fn hash_get_len(&self, key: &str) -> DbResult<usize> {
+        let mut write = self.inner.write().await;
+        if write.get(key).is_some_and(Entry::is_expired) {
+            write.remove(key);
+        }
+
+        match write.get(key) {
+            Some(entry) => {
+                match &entry.value {
+                    Value::Hash(hash) =>{
+                        Ok(hash.len())
+                    },
+                    _ => {
+                        Err(DbError::WrongType)
+                    }
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    pub async fn hash_get_keys(&self, key: &str) -> DbResult<Vec<String>> {
+        let mut write = self.inner.write().await;
+        if write.get(key).is_some_and(Entry::is_expired){
+            write.remove(key);
+        }
+
+        drop(write);
+        let read = self.inner.read().await;
+
+        match read.get(key) {
+            Some(entry) =>{
+                match &entry.value {
+                    Value::Hash(hash) =>{
+                        Ok(hash.keys().cloned().collect())
+                    },
+                    _ => {
+                        Err(DbError::WrongType)
+                    }
+                }
+            },
+            None => Ok(Vec::new())
+        }
+
+    }
+
+    pub async fn hash_get_values(&self, key: &str) -> DbResult<Vec<String>> {
+        let mut write = self.inner.write().await;
+        if write.get(key).is_some_and(Entry::is_expired){
+            write.remove(key);
+        }
+
+        drop(write);
+        let read = self.inner.read().await;
+
+        match read.get(key) {
+            Some(entry) =>{
+                match &entry.value {
+                    Value::Hash(hash) =>{
+                        Ok(hash.values().cloned().collect())
+                    },
+                    _ => Err(DbError::WrongType)
+                }
+            },
+            None => Ok(Vec::new())
         }
     }
 
@@ -528,6 +727,32 @@ mod tests {
             1
         );
         assert_eq!(db.set_card("tags").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn set_union_and_diff_return_sorted_members() {
+        let db = Db::new();
+
+        db.set_add("a", &["one".into(), "two".into(), "three".into()])
+            .await
+            .unwrap();
+        db.set_add("b", &["two".into(), "four".into()])
+            .await
+            .unwrap();
+        db.set_add("c", &["three".into()]).await.unwrap();
+
+        assert_eq!(
+            db.set_get_union(&["a".into(), "b".into(), "missing".into()])
+                .await
+                .unwrap(),
+            vec!["four", "one", "three", "two"]
+        );
+        assert_eq!(
+            db.set_get_diff(&["a".into(), "b".into(), "c".into()])
+                .await
+                .unwrap(),
+            vec!["one"]
+        );
     }
 
     #[tokio::test]

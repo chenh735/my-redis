@@ -8,3 +8,4 @@ default-run = "server"
 clap = {version = "4.5.55", features = ["derive"]}
 tokio = {version = "1.48.0", features = ["full"]}
 anyhow = "1.0.102"
+log = "0.4.29"

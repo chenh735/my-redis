@@ -11,10 +11,12 @@ pub async fn dispatch(db: Db, args: Vec<String>) -> String {
     match args[0].to_ascii_lowercase().as_str() {
         "ping" => ping(args),
         "echo" => echo(args),
-        "set" => set(db, args).await,
-        "get" => get(db, args).await,
         "del" => del(db, args).await,
         "exists" => exists(db, args).await,
+        "set" | "strset" => strset(db, args).await,
+        "get" | "strget" => strget(db, args).await,
+        "strlen" => strlen(db, args).await,
+        "append" => strapd(db, args).await,
         "lpush" => list_push(db, args, true).await,
         "rpush" => list_push(db, args, false).await,
         "lpop" => list_pop(db, args, true).await,
@@ -26,7 +28,13 @@ pub async fn dispatch(db: Db, args: Vec<String>) -> String {
         "sismember" => set_is_member(db, args).await,
         "scard" => set_card(db, args).await,
         "smembers" => set_members(db, args).await,
+        "sinter" => set_inter(db, args).await,
+        "sunion" => set_union(db, args).await,
+        "sdiff" => set_diff(db, args).await,
         "hset" => hash_set(db, args).await,
+        "hlen" => hash_len(db, args).await,
+        "hkeys" => hash_keys(db, args).await,
+        "hvalues" => hash_values(db, args).await,
         "hget" => hash_get(db, args).await,
         "hdel" => hash_del(db, args).await,
         "hexists" => hash_exists(db, args).await,
@@ -34,6 +42,8 @@ pub async fn dispatch(db: Db, args: Vec<String>) -> String {
         _ => syntax_error(),
     }
 }
+
+
 
 fn ping(args: Vec<String>) -> String {
     match args.len() {
@@ -66,36 +76,6 @@ fn expires_at(unit: &str, number: &str) -> Result<SystemTime> {
         .checked_add(duration)
         .ok_or_else(|| anyhow::anyhow!("expiration time overflow"))
 }
-
-async fn set(db: Db, args: Vec<String>) -> String {
-    match args.len() {
-        3 => {
-            db.set_key(args[1].as_str(), args[2].clone(), None).await;
-            simple("OK".to_string())
-        }
-        5 => match expires_at(args[3].as_str(), args[4].as_str()) {
-            Ok(time) => {
-                db.set_key(args[1].as_str(), args[2].clone(), Some(time))
-                    .await;
-                simple("OK".to_string())
-            }
-            Err(_) => syntax_error(),
-        },
-        _ => syntax_error(),
-    }
-}
-
-async fn get(db: Db, args: Vec<String>) -> String {
-    match args.len() {
-        2 => match db.get_string(args[1].as_str()).await {
-            Ok(Some(value)) => bulk(value),
-            Ok(None) => nil(),
-            Err(err) => db_error(err),
-        },
-        _ => syntax_error(),
-    }
-}
-
 async fn exists(db: Db, args: Vec<String>) -> String {
     match args.len() {
         1 => syntax_error(),
@@ -117,6 +97,65 @@ async fn del(db: Db, args: Vec<String>) -> String {
                 .await;
             integer(count as i32)
         }
+    }
+}
+
+
+async fn strset(db: Db, args: Vec<String>) -> String {
+    match args.len() {
+        3 => {
+            db.set_key(args[1].as_str(), args[2].clone(), None).await;
+            simple("OK".to_string())
+        }
+        5 => match expires_at(args[3].as_str(), args[4].as_str()) {
+            Ok(time) => {
+                db.set_key(args[1].as_str(), args[2].clone(), Some(time))
+                    .await;
+                simple("OK".to_string())
+            }
+            Err(_) => syntax_error(),
+        },
+        _ => syntax_error(),
+    }
+}
+
+async fn strget(db: Db, args: Vec<String>) -> String {
+    match args.len() {
+        2 => match db.get_string(args[1].as_str()).await {
+            Ok(Some(value)) => bulk(value),
+            Ok(None) => nil(),
+            Err(err) => db_error(err),
+        },
+        _ => syntax_error(),
+    }
+}
+
+async fn strlen(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        2 =>{
+            match db.get_str_len(args[1].as_str()).await{
+                Ok(n) => integer(n as i32),
+                Err(e) => db_error(e)
+            }
+
+        },
+        _ =>{
+            syntax_error()
+        }
+    }
+}
+
+async fn strapd(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        3 => {
+            match db.string_append_str(&args[0], &args[1]).await{
+                Ok(n) => integer(n as i32),
+                Err(e) => {
+                    db_error(e)
+                }
+            }
+        },
+        _ => syntax_error()
     }
 }
 
@@ -222,6 +261,42 @@ async fn set_members(db: Db, args: Vec<String>) -> String {
     }
 }
 
+async fn set_inter(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        0..=1 => syntax_error(),
+        _ => {
+            match db.set_get_inter(&args[1..]).await{
+                Ok(inter) => array(inter),
+                Err(e) => db_error(e)
+            }
+        }
+    }
+}
+
+async fn set_union(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        0..=1 => syntax_error(),
+        _ => {
+            match db.set_get_union(&args[1..]).await{
+                Ok(values) => array(values),
+                Err(e) => db_error(e)
+            }
+        }
+    }
+}
+
+async fn set_diff(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        0..=1 => syntax_error(),
+        _ => {
+            match db.set_get_diff(&args[1..]).await{
+                Ok(values) => array(values),
+                Err(e) => db_error(e)
+            }
+        }
+    }
+}
+
 async fn hash_set(db: Db, args: Vec<String>) -> String {
     if args.len() < 4 || (args.len() - 2) % 2 != 0 {
         return syntax_error();
@@ -235,6 +310,44 @@ async fn hash_set(db: Db, args: Vec<String>) -> String {
     match db.hash_set(&args[1], &pairs).await {
         Ok(count) => integer(count as i32),
         Err(err) => db_error(err),
+    }
+}
+
+async fn hash_len(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        2 => {
+            match db.hash_get_len(&args[1]).await {
+                Ok(n) => integer(n as i32),
+                Err(e) => db_error(e)
+            }
+        },
+        _ => syntax_error()
+    }
+}
+
+
+async fn hash_keys(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        2 => {
+            match db.hash_get_keys(&args[1]).await {
+                Ok(ans) => {
+                    array(ans)
+                },
+                Err(e) => db_error(e)
+            }
+        },
+        _ => syntax_error()
+    }
+}
+
+async fn hash_values(db: Db, args: Vec<String>) -> String{
+    match args.len() {
+        2 => match db.hash_get_values(&args[1]).await {
+            Ok(values) => array(values),
+            Err(e) => db_error(e)
+        },
+
+        _ => syntax_error()
     }
 }
 
@@ -411,6 +524,41 @@ mod tests {
         assert_eq!(
             dispatch(db, vec!["SMEMBERS".into(), "tags".into()]).await,
             "*2\r\n$2\r\ndb\r\n$4\r\nrust\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_union_and_diff_commands_return_arrays() {
+        let db = Db::new();
+
+        dispatch(
+            db.clone(),
+            vec![
+                "SADD".into(),
+                "a".into(),
+                "one".into(),
+                "two".into(),
+                "three".into(),
+            ],
+        )
+        .await;
+        dispatch(
+            db.clone(),
+            vec!["SADD".into(), "b".into(), "two".into(), "four".into()],
+        )
+        .await;
+
+        assert_eq!(
+            dispatch(
+                db.clone(),
+                vec!["SUNION".into(), "a".into(), "b".into(), "missing".into()]
+            )
+            .await,
+            "*4\r\n$4\r\nfour\r\n$3\r\none\r\n$5\r\nthree\r\n$3\r\ntwo\r\n"
+        );
+        assert_eq!(
+            dispatch(db, vec!["SDIFF".into(), "a".into(), "b".into()]).await,
+            "*2\r\n$3\r\none\r\n$5\r\nthree\r\n"
         );
     }
 

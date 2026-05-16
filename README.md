@@ -1,273 +1,236 @@
 # my-redis
 
-`my-redis` 是一个用 Rust 和 Tokio 实现的简化版 Redis 服务端，用来练习 RESP 协议解析、TCP 客户端/服务端通信、并发共享状态和基础 Redis 命令语义。
+`my-redis` 是一个使用 Rust 和 Tokio 编写的简易 Redis 实现，支持 RESP 协议、TCP 服务端/客户端、AOF 持久化、key 过期清理，以及多种 Redis 数据结构。
 
-当前实现支持内存型 key-value 存储，并通过 AOF 文件把写命令持久化到磁盘。
+## 功能特性
 
-## 功能
+- 基于 Tokio 的 TCP 服务端，默认监听 `127.0.0.1:6379`
+- 支持 RESP 请求解析和响应编码
+- 使用 `Arc<RwLock<HashMap<String, Entry>>>` 保存共享数据库状态
+- 支持 key 过期时间：`SET key value EX seconds` / `SET key value PX milliseconds`
+- 支持后台定时清理过期 key
+- 支持 AOF 持久化，写命令会追加到 `appendonly.aof`
+- 服务启动时会自动加载 `appendonly.aof` 恢复数据
+- 支持 String、List、Set、Hash 四类数据结构
 
-- Tokio TCP 服务端，默认监听 `127.0.0.1:6379`
-- 简单命令行客户端 `client`
-- RESP 请求编码、请求解析和响应解析
-- 并发共享数据库：`Arc<RwLock<HashMap<String, Entry>>>`
-- key 过期时间：支持 `SET key value EX seconds` 和 `SET key value PX milliseconds`
-- 惰性过期删除：`GET` / `EXISTS` / `DEL` 访问 key 时发现过期会立即清理
-- 后台定时清理：server 启动后每 1 秒扫描并删除过期 key
-- AOF 持久化：`SET` / `DEL` 成功执行后以 RESP 格式追加写入 `appendonly.aof`
-- 启动恢复：server 启动时加载并重放 `appendonly.aof` 中的写命令
+## 支持的数据结构和命令
 
-## 支持的命令
+### 通用命令
 
-### PING
+| 命令                     | 说明              |
+|------------------------|-----------------|
+| `PING [message]`       | 测试连接，带参数时返回参数内容 |
+| `ECHO message`         | 返回输入内容          |
+| `DEL key [key ...]`    | 删除一个或多个 key     |
+| `EXISTS key [key ...]` | 返回存在的 key 数量    |
+
+### String
+
+| 命令                                 | 说明                   |
+|------------------------------------|----------------------|
+| `STRSET key value`                 | 设置字符串值               |
+| `STRSET key value EX seconds`      | 设置字符串值，并以秒为单位设置过期时间  |
+| `STRSET key value PX milliseconds` | 设置字符串值，并以毫秒为单位设置过期时间 |
+| `STRGET key`                       | 获取字符串值               |
+| `STRLEN key`                       | 获取字符串长度              |
+| `APPEND key value`                 | 追加字符串，返回新长度          |           
+
+
+示例：
 
 ```powershell
-cargo run --bin client -- --cmd "PING"
-cargo run --bin client -- --cmd "PING hello"
+cargo run --bin client -- --cmd "SET name redis"
+cargo run --bin client -- --cmd "GET name"
+cargo run --bin client -- --cmd "SET temp redis EX 10"
 ```
 
-返回：
+### List
 
-```text
-Success response: PONG
-Success response: hello
-```
+List 使用 `VecDeque<String>` 保存，支持从两端插入和弹出。
 
-### ECHO
+| 命令                            | 说明                  |
+|-------------------------------|---------------------|
+| `LPUSH key value [value ...]` | 从列表左侧插入一个或多个元素      |
+| `RPUSH key value [value ...]` | 从列表右侧插入一个或多个元素      |
+| `LPOP key`                    | 从列表左侧弹出一个元素         |
+| `RPOP key`                    | 从列表右侧弹出一个元素         |
+| `LLEN key`                    | 返回列表长度              |
+| `LRANGE key start stop`       | 返回指定范围内的列表元素，支持负数下标 |
+
+示例：
 
 ```powershell
-cargo run --bin client -- --cmd "ECHO hello"
+cargo run --bin client -- --cmd "LPUSH letters a b c"
+cargo run --bin client -- --cmd "LRANGE letters 0 -1"
+cargo run --bin client -- --cmd "RPOP letters"
 ```
 
-返回：
+`LPUSH letters a b c` 后，列表内容为 `c b a`，这和 Redis 的插入顺序一致。
 
-```text
-Success response: hello
+### Set
+
+Set 使用 `HashSet<String>` 保存，成员不重复。为了测试结果稳定，`SMEMBERS` 的返回值会按字典序排序。
+
+| 命令                              | 说明                          |
+|---------------------------------|-----------------------------|
+| `SADD key member [member ...]`  | 添加一个或多个成员，返回新增成员数量          |
+| `SREM key member [member ...]`  | 删除一个或多个成员，返回成功删除数量          |
+| `SISMEMBER key member`          | 判断成员是否存在，存在返回 `1`，不存在返回 `0` |
+| `SCARD key`                     | 返回集合成员数量                    |
+| `SMEMBERS key`                  | 返回集合全部成员                    |
+| `SINTER key [key ...]`          | 返回多个集合的交集                   |
+| `SUNION key [key ...]`          | 返回多个集合的并集                   |
+| `SDIFF key [key ...]`           | 返回第一个集合和后续集合的差集             |
+
+示例：
+
+```powershell
+cargo run --bin client -- --cmd "SADD tags rust db rust"
+cargo run --bin client -- --cmd "SISMEMBER tags rust"
+cargo run --bin client -- --cmd "SMEMBERS tags"
 ```
 
-### SET
+### Hash
+
+Hash 使用 `HashMap<String, String>` 保存字段和值。
+
+| 命令                                       | 说明                          |
+|------------------------------------------|-----------------------------|
+| `HSET key field value [field value ...]` | 设置一个或多个字段，返回新增字段数量          |
+| `HGET key field`                         | 获取字段值                       |
+| `HDEL key field [field ...]`             | 删除一个或多个字段，返回成功删除数量          |
+| `HEXISTS key field`                      | 判断字段是否存在，存在返回 `1`，不存在返回 `0` |
+| `HGETALL key`                            | 返回所有字段和值，按字段名排序后扁平化返回       |
+| `HLEN key`                               | 字段数量                        |
+| `HKEYS key`                              | 所有 field                    |
+| `HVALS key`                              | 所有 value                    |
+
+示例：
+
+```powershell
+cargo run --bin client -- --cmd "HSET user name chen age 18"
+cargo run --bin client -- --cmd "HGET user name"
+cargo run --bin client -- --cmd "HGETALL user"
+```
+
+## 类型检查
+
+同一个 key 只能保存一种数据结构。比如先执行：
 
 ```powershell
 cargo run --bin client -- --cmd "SET name redis"
 ```
 
-返回：
-
-```text
-Success response: OK
-```
-
-设置秒级过期时间：
+再对 `name` 执行列表命令：
 
 ```powershell
-cargo run --bin client -- --cmd "SET temp redis EX 10"
+cargo run --bin client -- --cmd "LPUSH name value"
 ```
 
-设置毫秒级过期时间：
-
-```powershell
-cargo run --bin client -- --cmd "SET temp redis PX 500"
-```
-
-### GET
-
-```powershell
-cargo run --bin client -- --cmd "GET name"
-```
-
-存在时返回 bulk string：
+会返回类似 Redis 的错误：
 
 ```text
-Success response: redis
+ERR WRONGTYPE Operation against a key holding the wrong kind of value
 ```
 
-key 不存在或已经过期时，服务端返回 RESP Null Bulk String：
+内部通过 `Value` 枚举区分不同数据结构：
 
-```text
-$-1\r\n
+```rust
+pub enum Value {
+    String(String),
+    List(VecDeque<String>),
+    Set(HashSet<String>),
+    Hash(HashMap<String, String>),
+}
 ```
 
-客户端显示为：
+## AOF 持久化
 
-```text
-Success response: nil
-```
+服务端会把成功执行的写命令追加到 `appendonly.aof`。当前支持持久化的写命令包括：
 
-### EXISTS
+- `SET`
+- `DEL`
+- `LPUSH`
+- `RPUSH`
+- `LPOP`
+- `RPOP`
+- `SADD`
+- `SREM`
+- `HSET`
+- `HDEL`
 
-```powershell
-cargo run --bin client -- --cmd "EXISTS name missing"
-```
-
-返回存在且未过期的 key 数量：
-
-```text
-Success response: 1
-```
-
-### DEL
-
-```powershell
-cargo run --bin client -- --cmd "DEL name"
-```
-
-返回实际删除的 key 数量：
-
-```text
-Success response: 1
-```
-
-过期 key 不计入删除数量。
-
-## 持久化
-
-项目使用简化版 AOF 持久化。服务端启动时会先读取 `appendonly.aof`，解析其中的 RESP 命令并重放到内存数据库；运行期间，`SET` 和 `DEL` 执行成功后会追加写入同一个文件。
-
-AOF 文件保存的是 RESP 请求格式，而不是普通文本命令。例如：
+AOF 文件使用 RESP Array 格式保存命令。例如：
 
 ```text
 SET name redis
 ```
 
-会写入：
+会保存为：
 
 ```text
 *3\r\n$3\r\nSET\r\n$4\r\nname\r\n$5\r\nredis\r\n
 ```
 
-当前只会持久化写命令：
+读命令不会写入 AOF，例如 `GET`、`EXISTS`、`LRANGE`、`SMEMBERS`、`HGETALL`。
 
-- `SET key value`
-- `SET key value EX seconds`
-- `SET key value PX milliseconds`
-- `DEL key [key ...]`
+## 运行服务端
 
-`GET`、`EXISTS`、`PING`、`ECHO` 不会写入 AOF。
-
-注意：当前 AOF 会保存原始 `SET ... EX/PX` 命令。服务重启后重放这类命令时，key 会重新获得对应的相对过期时间；后续可以扩展为 `PXAT` 这类绝对过期时间格式来更精确地还原 TTL。
-
-## 运行
-
-启动服务端：
+默认运行：
 
 ```powershell
-cargo run -- --addr 127.0.0.1 --port 6379
+cargo run
 ```
 
-另开一个终端运行客户端：
+指定端口：
 
 ```powershell
+cargo run --bin server -- --port 6380
+```
+
+指定地址和端口：
+
+```powershell
+cargo run --bin server -- --addr 127.0.0.1 --port 6380
+```
+
+## 使用客户端
+
+```powershell
+cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "PING"
 cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "SET name redis"
 cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "GET name"
 ```
 
-如果 6379 端口被占用，可以换端口：
+如果使用默认地址 `127.0.0.1:6379`，可以省略 `--addr`：
 
 ```powershell
-cargo run --bin server -- --port 6380
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "PING"
-```
-
-手动验证持久化：
-
-```powershell
-Remove-Item .\appendonly.aof -ErrorAction SilentlyContinue
-cargo run --bin server -- --port 6380
-```
-
-另开一个终端写入数据：
-
-```powershell
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET name redis"
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET age 18"
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "DEL age"
-```
-
-停止并重启 server 后验证：
-
-```powershell
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET name"
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET age"
-```
-
-预期结果：
-
-```text
-Success response: redis
-Success response: nil
+cargo run --bin client -- --cmd "PING"
 ```
 
 ## 测试
 
-运行编译检查：
-
-```powershell
-cargo check
-```
-
-运行单元测试：
+运行全部测试：
 
 ```powershell
 cargo test
 ```
 
-只运行命令分发模块测试：
+只运行命令层测试：
 
 ```powershell
 cargo test --lib cmd::cmd
 ```
 
-只运行 RESP 编解码模块测试：
+只运行数据库层测试：
+
+```powershell
+cargo test --lib db::db
+```
+
+只运行 RESP 测试：
 
 ```powershell
 cargo test --lib resp::resp
-```
-
-当前单元测试覆盖：
-
-- 未过期 key 可以读取
-- 过期 key 会返回 `None` 并被清理
-- `EXISTS` 可以统计多个 key
-- `DEL` 只统计实际存在且未过期的 key
-- `SET key value EX seconds` 支持大写 `EX` 并能正确过期
-- `PING message` 返回传入的 message
-- `DEL` 命令会真正删除 key
-- RESP 请求编码覆盖空数组和空 bulk string
-- RESP bulk string 编码按字节长度处理非 ASCII 文本
-- RESP 请求解析覆盖空数组、空 bulk string、非法协议和 bulk string 缺少 `\r\n` 的边界
-- RESP 响应解析覆盖空 bulk string、Null Bulk String、非法协议和 bulk string 缺少 `\r\n` 的边界
-- AOF 解析覆盖多条 RESP 请求、空 bulk string 和非法协议
-- AOF 写入覆盖 RESP 格式追加
-- AOF 加载覆盖启动时重放 `SET` / `DEL`
-
-手动验证过期时间：
-
-```powershell
-cargo run --bin server -- --port 6380
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET temp redis PX 500"
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
-Start-Sleep -Milliseconds 600
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
-```
-
-最后一次 `GET temp` 应该显示：
-
-```text
-Success response: nil
-```
-
-手动验证后台定时清理：
-
-```powershell
-cargo run --bin server -- --port 6380
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "SET temp redis PX 500"
-Start-Sleep -Seconds 2
-cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "GET temp"
-```
-
-后台任务每 1 秒清理一次过期 key，最后一次 `GET temp` 应该显示：
-
-```text
-Success response: nil
 ```
 
 ## 项目结构
@@ -276,66 +239,23 @@ Success response: nil
 my-redis
 ├── Cargo.toml
 ├── README.md
+├── appendonly.aof
 └── src
     ├── lib.rs
     ├── bin
-    │   ├── client.rs    # 简单命令行客户端
-    │   └── server.rs    # 服务端入口和命令分发
-    ├── db
-    │   ├── mod.rs
-    │   └── db.rs        # 内存数据库、过期时间和 key 操作
+    │   ├── client.rs
+    │   └── server.rs
     ├── cmd
     │   ├── mod.rs
-    │   └── cmd.rs       # 命令分发和命令语义
+    │   └── cmd.rs
+    ├── db
+    │   ├── mod.rs
+    │   └── db.rs
     ├── persist
     │   ├── mod.rs
-    │   ├── parse.rs     # AOF 中 RESP 命令数组解析
-    │   └── persistence.rs # AOF 打开、追加和加载
+    │   ├── parse.rs
+    │   └── persistence.rs
     └── resp
         ├── mod.rs
-        └── resp.rs      # RESP 编码和解码
+        └── resp.rs
 ```
-
-## 实现说明
-
-数据库不再直接存储 `HashMap<String, String>`，而是存储带元信息的 `Entry`：
-
-```rust
-struct Entry {
-    value: String,
-    expires_at: Option<SystemTime>,
-}
-```
-
-`expires_at = None` 表示永不过期，`Some(SystemTime)` 表示到达该系统时间后过期。
-
-过期的组合策略：
-
-- `GET` 发现 key 过期时删除并返回 nil
-- `EXISTS` 发现 key 过期时删除且不计数
-- `DEL` 删除过期 key 时不计入删除数量
-- `src/bin/server.rs` 在创建 `Db` 后调用 `db.start_clean_up_keys()` 启动后台清理任务
-- `Db::start_clean_up_keys` 内部使用 `tokio::spawn` 运行后台循环，不会阻塞 TCP accept 循环
-- 后台清理任务每 1 秒获取 `RwLock` 写锁，并用 `HashMap::retain` 删除已经过期的 entry
-
-命令处理流程：
-
-- `src/bin/server.rs` 负责监听 TCP 连接、解析 RESP 请求并写回响应
-- `src/cmd/cmd.rs` 负责命令分发和 `PING`、`ECHO`、`SET`、`GET`、`EXISTS`、`DEL` 的语义
-- `src/bin/client.rs` 负责把命令行输入编码成 RESP 请求并解析服务端响应
-- `src/persist/persistence.rs` 负责打开 AOF、追加写命令、启动时加载 AOF
-- `src/persist/parse.rs` 负责解析 AOF 文件中的 RESP 命令数组
-
-持久化流程：
-
-- server 启动时先创建 `Db`，再调用 `Aof::load("appendonly.aof", db.clone())` 重放历史写命令
-- server 使用 `Arc<Mutex<Aof>>` 在多个连接任务之间共享 AOF 句柄，并保证同一时间只有一个任务写文件
-- 每个请求先通过 `dispatch` 执行；如果命令是 `SET` / `DEL` 且响应不是错误，再调用 `Aof::append(&args)` 追加写入
-
-## 后续可以优化
-
-- 支持更多 Redis `SET` 参数，例如 `NX`、`XX`、`KEEPTTL`
-- 支持 `EXPIRE`、`TTL`、`PERSIST` 等过期时间相关命令
-- 支持 AOF rewrite，压缩重复写命令生成更小的持久化文件
-- 将过期时间持久化为绝对时间，避免重启后相对 TTL 被重新计算
-- 客户端目前用空白字符拆分命令，暂不适合发送包含空格的单个参数

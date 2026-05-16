@@ -69,7 +69,18 @@ pub fn is_write_command(args: &[String]) -> bool {
     args.first().is_some_and(|cmd| {
         matches!(
             cmd.to_ascii_lowercase().as_str(),
-            "set" | "del" | "lpush" | "rpush" | "lpop" | "rpop" | "sadd" | "srem" | "hset" | "hdel"
+                "set"
+                | "strset"
+                | "del"
+                | "append"
+                | "lpush"
+                | "rpush"
+                | "lpop"
+                | "rpop"
+                | "sadd"
+                | "srem"
+                | "hset"
+                | "hdel"
         )
     })
 }
