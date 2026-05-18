@@ -152,6 +152,10 @@ pub fn is_bgsave_command(args: &[String]) -> bool {
 }
 
 pub fn tick_flush(sec: u64, aof: Arc<Mutex<Aof>>) {
+    if sec == 0 {
+        return;
+    }
+
     let mut interval = interval(Duration::from_secs(sec));
     tokio::spawn(async move {
         loop {

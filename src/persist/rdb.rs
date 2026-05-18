@@ -115,16 +115,32 @@ pub async fn save_hybrid_snapshot(
     Ok(())
 }
 
-pub fn tick_hybrid_snapshot(sec: u64, db: Db, aof: Arc<Mutex<Aof>>) {
+pub fn tick_hybrid_snapshot(
+    sec: u64,
+    rdb_path: String,
+    base_aof_path: String,
+    incr_aof_path: String,
+    db: Db,
+    aof: Arc<Mutex<Aof>>,
+) {
+    if sec == 0 {
+        return;
+    }
+
     let mut interval = interval(Duration::from_secs(sec));
 
     tokio::spawn(async move {
         interval.tick().await;
         loop {
             interval.tick().await;
-            if let Err(e) =
-                save_hybrid_snapshot(RDB_PATH, AOF_PATH, AOF_INCR_PATH, db.clone(), aof.clone())
-                    .await
+            if let Err(e) = save_hybrid_snapshot(
+                &rdb_path,
+                &base_aof_path,
+                &incr_aof_path,
+                db.clone(),
+                aof.clone(),
+            )
+            .await
             {
                 eprintln!("hybrid snapshot error: {e}");
             }
