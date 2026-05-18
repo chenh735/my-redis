@@ -118,6 +118,14 @@ pub fn array(items: Vec<String>) -> String {
     response
 }
 
+pub fn raw_array(items: Vec<String>) -> String {
+    let mut response = format!("*{}\r\n", items.len());
+    for item in items {
+        response.push_str(&item);
+    }
+    response
+}
+
 pub fn integer(num: i32) -> String {
     format!(":{num}\r\n")
 }
@@ -225,6 +233,14 @@ mod tests {
         assert_eq!(
             array(vec!["age".to_string(), "18".to_string()]),
             "*2\r\n$3\r\nage\r\n$2\r\n18\r\n"
+        );
+    }
+
+    #[test]
+    fn raw_array_keeps_item_response_types() {
+        assert_eq!(
+            raw_array(vec![simple("OK".to_string()), integer(1), nil()]),
+            "*3\r\n+OK\r\n:1\r\n$-1\r\n"
         );
     }
 

@@ -3,6 +3,99 @@ use crate::resp::resp::{array, bulk, error, integer, nil, simple, syntax_error};
 use anyhow::{Result, bail};
 use std::time::{Duration, SystemTime};
 
+pub fn validate_command(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("syntax error".to_string());
+    }
+
+    match args[0].to_ascii_lowercase().as_str() {
+        "ping" => match args.len() {
+            1 | 2 => Ok(()),
+            _ => Err("syntax error".to_string()),
+        },
+        "echo" => match args.len() {
+            2 => Ok(()),
+            _ => Err("syntax error".to_string()),
+        },
+        "set" | "strset" => match args.len() {
+            3 => Ok(()),
+            5 if matches!(args[3].to_ascii_lowercase().as_str(), "ex" | "px") => {
+                if args[4].parse::<u64>().is_ok() {
+                    Ok(())
+                } else {
+                    Err("syntax error".to_string())
+                }
+            }
+            _ => Err("syntax error".to_string()),
+        },
+        "get" | "strget" | "strlen" | "llen" | "scard" | "smembers" | "hgetall" => {
+            if args.len() == 2 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "del" | "exists" | "sinter" | "sunion" | "sdiff" => {
+            if args.len() >= 2 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "append" | "sismember" | "hget" | "hexists" => {
+            if args.len() == 3 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "lpush" | "rpush" | "sadd" | "srem" => {
+            if args.len() >= 3 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "lpop" | "rpop" => {
+            if args.len() == 2 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "lrange" => {
+            if args.len() == 4 && args[2].parse::<i64>().is_ok() && args[3].parse::<i64>().is_ok() {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "hset" => {
+            if args.len() >= 4 && (args.len() - 2) % 2 == 0 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "hdel" => {
+            if args.len() >= 3 {
+                Ok(())
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        "bgsave" => {
+            if args.len() == 1 {
+                Ok(())
+                
+            } else {
+                Err("syntax error".to_string())
+            }
+        }
+        _ => Err("unknown command".to_string()),
+    }
+}
+
 pub async fn dispatch(db: Db, args: Vec<String>) -> String {
     if args.is_empty() {
         return syntax_error();

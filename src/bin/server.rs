@@ -7,6 +7,7 @@ use my_redis::persist::{
     tick_hybrid_snapshot,
 };
 use my_redis::resp::resp::decode_request;
+use my_redis::transaction::{Transaction, TransactionPersistence};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -70,10 +71,16 @@ async fn main() {
         let cur_db = db.clone();
         let cur_aof = aof.clone();
         let cur_config = config.clone();
+        let cur_persistence = TransactionPersistence::new(
+            config.rdb_path.clone(),
+            config.aof_path.clone(),
+            config.aof_incr_path.clone(),
+        );
         tokio::spawn({
             async move {
                 let (reader, mut writer) = socket.into_split();
                 let mut reader = BufReader::new(reader);
+                let mut transaction = Transaction::default();
 
                 loop {
                     let request = decode_request(&mut reader).await;
@@ -93,7 +100,17 @@ async fn main() {
                     }
 
                     let mut response;
-                    if is_bgsave_command(&text) {
+                    if let Some(tx_response) = transaction
+                        .handle(
+                            cur_db.clone(),
+                            cur_aof.clone(),
+                            cur_persistence.clone(),
+                            text.clone(),
+                        )
+                        .await
+                    {
+                        response = tx_response;
+                    } else if is_bgsave_command(&text) {
                         response = dispatch(cur_db.clone(), text.clone()).await;
                         if !response.starts_with('-') {
                             let save_db = cur_db.clone();
