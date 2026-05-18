@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Value {
     String(String),
     List(VecDeque<String>),
@@ -12,10 +13,10 @@ pub enum Value {
     Hash(HashMap<String, String>),
 }
 
-#[derive(Clone, Debug)]
-struct Entry {
-    value: Value,
-    expires_at: Option<SystemTime>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct Entry {
+    pub(crate) value: Value,
+    pub(crate) expires_at: Option<SystemTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +43,20 @@ impl Db {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub(crate) async fn snapshot(&self) -> HashMap<String, Entry> {
+        let mut write = self.inner.write().await;
+        write.retain(|_key, entry| !entry.is_expired());
+        write.clone()
+    }
+
+    pub(crate) async fn replace_snapshot(&self, snapshot: HashMap<String, Entry>) {
+        let mut write = self.inner.write().await;
+        *write = snapshot
+            .into_iter()
+            .filter(|(_key, entry)| !entry.is_expired())
+            .collect();
     }
 
     pub async fn get_string(&self, key: &str) -> DbResult<Option<String>> {
@@ -103,50 +118,46 @@ impl Db {
         count
     }
 
-    pub async fn get_str_len(&self, key: &str) -> DbResult<usize>{
+    pub async fn get_str_len(&self, key: &str) -> DbResult<usize> {
         let mut write = self.inner.write().await;
         if write.get(key).is_some_and(Entry::is_expired) {
             write.remove(key);
         }
 
         match write.get(key) {
-            Some(entry) => {
-                match &entry.value {
-                    Value::String(value) => {
-                        Ok(value.len())
-                    },
-                    _ => Err(DbError::WrongType)
-                }
+            Some(entry) => match &entry.value {
+                Value::String(value) => Ok(value.len()),
+                _ => Err(DbError::WrongType),
             },
-            None => Ok(0)
+            None => Ok(0),
         }
     }
 
-    pub async fn string_append_str(&self, key: &str, value: &str) -> DbResult<usize>{
+    pub async fn string_append_str(&self, key: &str, value: &str) -> DbResult<usize> {
         let mut write = self.inner.write().await;
         if write.get(key).is_some_and(Entry::is_expired) {
             write.remove(key);
         }
 
         match write.get_mut(key) {
-            Some(entry) =>{
-                match  &mut entry.value{
-                    Value::String(v) =>{
-                        v.push_str(value);
-                        Ok(v.len())
-                    },
-                    _ => Err(DbError::WrongType)
+            Some(entry) => match &mut entry.value {
+                Value::String(v) => {
+                    v.push_str(value);
+                    Ok(v.len())
                 }
-            }
+                _ => Err(DbError::WrongType),
+            },
             None => {
-                write.insert(key.to_string(), Entry{
-                    value: Value::String(value.to_string()),
-                    expires_at: None
-                });
+                write.insert(
+                    key.to_string(),
+                    Entry {
+                        value: Value::String(value.to_string()),
+                        expires_at: None,
+                    },
+                );
                 Ok(value.len())
             }
         }
-
     }
 
     pub async fn push_list(&self, key: &str, values: &[String], left: bool) -> DbResult<usize> {
@@ -359,31 +370,31 @@ impl Db {
 
     pub async fn set_get_inter(&self, keys: &[String]) -> DbResult<Vec<String>> {
         let read = self.inner.read().await;
-        for key in keys{
+        for key in keys {
             match read.get(key) {
-                Some(entry) =>{
-                    if entry.is_expired() || !matches!(entry.value, Value::Set(_)){
-                        return Ok(Vec::new())
+                Some(entry) => {
+                    if entry.is_expired() || !matches!(entry.value, Value::Set(_)) {
+                        return Ok(Vec::new());
                     }
-                },
-                None => return Ok(Vec::new())
+                }
+                None => return Ok(Vec::new()),
             }
-        };
+        }
 
         let ans = read.get(&keys[0]).unwrap().value.clone();
         match ans {
-            Value::Set(mut values) =>{
-                for key in &keys[1..]{
+            Value::Set(mut values) => {
+                for key in &keys[1..] {
                     match &read.get(key).unwrap().value {
                         Value::Set(cur_hash) => {
                             values = values.intersection(cur_hash).cloned().collect();
-                        },
-                        _ => return Err(DbError::WrongType)
+                        }
+                        _ => return Err(DbError::WrongType),
                     }
-                };
+                }
                 Ok(values.into_iter().collect())
-            },
-            _ => Err(DbError::WrongType)
+            }
+            _ => Err(DbError::WrongType),
         }
     }
 
@@ -449,23 +460,17 @@ impl Db {
         }
 
         match write.get(key) {
-            Some(entry) => {
-                match &entry.value {
-                    Value::Hash(hash) =>{
-                        Ok(hash.len())
-                    },
-                    _ => {
-                        Err(DbError::WrongType)
-                    }
-                }
+            Some(entry) => match &entry.value {
+                Value::Hash(hash) => Ok(hash.len()),
+                _ => Err(DbError::WrongType),
             },
-            None => Ok(0)
+            None => Ok(0),
         }
     }
 
     pub async fn hash_get_keys(&self, key: &str) -> DbResult<Vec<String>> {
         let mut write = self.inner.write().await;
-        if write.get(key).is_some_and(Entry::is_expired){
+        if write.get(key).is_some_and(Entry::is_expired) {
             write.remove(key);
         }
 
@@ -473,24 +478,17 @@ impl Db {
         let read = self.inner.read().await;
 
         match read.get(key) {
-            Some(entry) =>{
-                match &entry.value {
-                    Value::Hash(hash) =>{
-                        Ok(hash.keys().cloned().collect())
-                    },
-                    _ => {
-                        Err(DbError::WrongType)
-                    }
-                }
+            Some(entry) => match &entry.value {
+                Value::Hash(hash) => Ok(hash.keys().cloned().collect()),
+                _ => Err(DbError::WrongType),
             },
-            None => Ok(Vec::new())
+            None => Ok(Vec::new()),
         }
-
     }
 
     pub async fn hash_get_values(&self, key: &str) -> DbResult<Vec<String>> {
         let mut write = self.inner.write().await;
-        if write.get(key).is_some_and(Entry::is_expired){
+        if write.get(key).is_some_and(Entry::is_expired) {
             write.remove(key);
         }
 
@@ -498,15 +496,11 @@ impl Db {
         let read = self.inner.read().await;
 
         match read.get(key) {
-            Some(entry) =>{
-                match &entry.value {
-                    Value::Hash(hash) =>{
-                        Ok(hash.values().cloned().collect())
-                    },
-                    _ => Err(DbError::WrongType)
-                }
+            Some(entry) => match &entry.value {
+                Value::Hash(hash) => Ok(hash.values().cloned().collect()),
+                _ => Err(DbError::WrongType),
             },
-            None => Ok(Vec::new())
+            None => Ok(Vec::new()),
         }
     }
 

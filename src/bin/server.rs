@@ -1,7 +1,10 @@
 use clap::Parser;
 use my_redis::cmd::cmd::dispatch;
 use my_redis::db::Db;
-use my_redis::persist::{Aof, is_write_command, tick_flush};
+use my_redis::persist::{
+    AOF_INCR_PATH, AOF_PATH, Aof, RDB_PATH, Rdb, is_bgsave_command, is_write_command,
+    save_hybrid_snapshot, tick_flush, tick_hybrid_snapshot,
+};
 use my_redis::resp::resp::decode_request;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -26,13 +29,14 @@ async fn main() {
         .expect("TcpListener bind failed");
     println!("{}:{} server started", args.addr, args.port);
     let db = Db::new();
-    Aof::load("appendonly.aof", db.clone())
+    let active_aof_path = Rdb::load_hybrid(RDB_PATH, AOF_PATH, AOF_INCR_PATH, db.clone())
         .await
-        .expect("load AOF failed");
+        .expect("load persistence failed");
     let aof = Arc::new(Mutex::new(
-        Aof::open("appendonly.aof").await.expect("open AOF failed"),
+        Aof::open(&active_aof_path).await.expect("open AOF failed"),
     ));
     tick_flush(2, aof.clone());
+    tick_hybrid_snapshot(60, db.clone(), aof.clone());
     db.start_clean_up_keys();
 
     loop {
@@ -60,13 +64,40 @@ async fn main() {
                     if text.is_empty() {
                         break;
                     }
-                    let mut response = dispatch(cur_db.clone(), text.clone()).await;
-                    if is_write_command(&text) && !response.starts_with('-') {
-                        if let Err(e) = cur_aof.lock().await.append(&text).await {
-                            eprintln!("AOF append error:{e}");
-                            response = "-ERR persistence error\r\n".to_string();
+
+                    let mut response;
+                    if is_bgsave_command(&text) {
+                        response = dispatch(cur_db.clone(), text.clone()).await;
+                        if !response.starts_with('-') {
+                            let save_db = cur_db.clone();
+                            let save_aof = cur_aof.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = save_hybrid_snapshot(
+                                    RDB_PATH,
+                                    AOF_PATH,
+                                    AOF_INCR_PATH,
+                                    save_db,
+                                    save_aof,
+                                )
+                                .await
+                                {
+                                    eprintln!("hybrid snapshot error:{e}");
+                                }
+                            });
                         }
+                    } else if is_write_command(&text) {
+                        let mut aof = cur_aof.lock().await;
+                        response = dispatch(cur_db.clone(), text.clone()).await;
+                        if !response.starts_with('-') {
+                            if let Err(e) = aof.append(&text).await {
+                                eprintln!("AOF append error:{e}");
+                                response = "-ERR persistence error\r\n".to_string();
+                            }
+                        }
+                    } else {
+                        response = dispatch(cur_db.clone(), text.clone()).await;
                     }
+
                     writer.write_all(response.as_bytes()).await.expect("main");
                 }
             }

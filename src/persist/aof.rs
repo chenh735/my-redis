@@ -3,32 +3,32 @@ use crate::db::Db;
 use crate::persist::parse::parse_array;
 use crate::resp::resp::encode_request;
 use anyhow::{Context, Result, bail};
-use std::io::ErrorKind;
+use std::io::{ErrorKind, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::fs::{self, File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, interval};
 
 pub struct Aof {
-    file: File,
+    file: Option<File>,
+    path: PathBuf,
 }
 
 impl Aof {
     pub async fn open(path: &str) -> Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await
-            .with_context(|| format!("open AOF file failed: {path}"))?;
+        let file = open_aof_file(path, false).await?;
 
-        Ok(Self { file })
+        Ok(Self {
+            file: Some(file),
+            path: PathBuf::from(path),
+        })
     }
 
     pub async fn append(&mut self, args: &[String]) -> Result<()> {
         let content = encode_request(args.to_vec())?.context("encode empty AOF request")?;
-        self.file.write_all(content.as_bytes()).await?;
+        self.file_mut()?.write_all(content.as_bytes()).await?;
         Ok(())
     }
 
@@ -60,16 +60,77 @@ impl Aof {
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        self.file.flush().await?;
+        self.file_mut()?.flush().await?;
         Ok(())
     }
+
+    pub async fn clear(&mut self) -> Result<()> {
+        self.flush().await?;
+        let file = self.file_mut()?;
+        file.set_len(0).await?;
+        file.seek(SeekFrom::Start(0)).await?;
+        Ok(())
+    }
+
+    pub async fn switch_to(&mut self, path: &str, truncate: bool) -> Result<()> {
+        self.flush().await?;
+        let file = open_aof_file(path, truncate).await?;
+        self.file = Some(file);
+        self.path = PathBuf::from(path);
+        Ok(())
+    }
+
+    pub async fn rename_current_to(&mut self, path: &str) -> Result<()> {
+        self.flush().await?;
+        let old_path = self.path.clone();
+        drop(self.file.take());
+
+        if let Err(err) = fs::rename(&old_path, path).await {
+            self.file = Some(open_aof_file(old_path.to_str().unwrap_or_default(), false).await?);
+            return Err(err).with_context(|| {
+                format!(
+                    "rename current AOF failed: {} -> {path}",
+                    old_path.display()
+                )
+            });
+        }
+
+        let file = open_aof_file(path, false).await?;
+        self.file = Some(file);
+        self.path = PathBuf::from(path);
+        Ok(())
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn file_mut(&mut self) -> Result<&mut File> {
+        self.file.as_mut().context("AOF file is not open")
+    }
+}
+
+async fn open_aof_file(path: &str, truncate: bool) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+
+    if truncate {
+        options.truncate(true);
+    } else {
+        options.append(true);
+    }
+
+    options
+        .open(path)
+        .await
+        .with_context(|| format!("open AOF file failed: {path}"))
 }
 
 pub fn is_write_command(args: &[String]) -> bool {
     args.first().is_some_and(|cmd| {
         matches!(
             cmd.to_ascii_lowercase().as_str(),
-                "set"
+            "set"
                 | "strset"
                 | "del"
                 | "append"
@@ -83,6 +144,11 @@ pub fn is_write_command(args: &[String]) -> bool {
                 | "hdel"
         )
     })
+}
+
+pub fn is_bgsave_command(args: &[String]) -> bool {
+    args.first()
+        .is_some_and(|cmd| matches!(cmd.to_ascii_lowercase().as_str(), "bgsave"))
 }
 
 pub fn tick_flush(sec: u64, aof: Arc<Mutex<Aof>>) {

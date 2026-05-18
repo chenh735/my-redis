@@ -1,4 +1,6 @@
+pub mod aof;
 pub(crate) mod parse;
-pub mod persistence;
+pub mod rdb;
 
-pub use persistence::*;
+pub use aof::*;
+pub use rdb::*;
