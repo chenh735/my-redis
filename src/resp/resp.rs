@@ -7,7 +7,7 @@ where
     R: AsyncRead + Unpin,
 {
     let mut line = String::new();
-    let n = read.read_line(&mut line).await.expect("read_command1");
+    let n = read.read_line(&mut line).await?;
     if n == 0 {
         return Ok(None);
     }
@@ -19,14 +19,14 @@ where
     let mut ans = Vec::<String>::with_capacity(count);
     for _ in 0..count {
         line.clear();
-        read.read_line(&mut line).await.expect("read_command2");
+        read.read_line(&mut line).await?;
         let cur_line = line.trim_end_matches("\r\n");
         if !cur_line.starts_with("$") {
             bail!("没有以$开头");
         }
         let len: usize = cur_line[1..].parse()?;
         let mut text = vec![0; len + 2];
-        read.read_exact(&mut text).await.expect("read_command3");
+        read.read_exact(&mut text).await?;
         if !text.ends_with(b"\r\n") {
             bail!(r#"内容缺少\r\n"#);
         }
@@ -49,7 +49,7 @@ where
     R: AsyncRead + Unpin,
 {
     let mut line = String::new();
-    read.read_line(&mut line).await.expect("decode_response1");
+    read.read_line(&mut line).await?;
     let cur_line = line.trim_end_matches("\r\n");
     let ans = match cur_line.as_bytes().first() {
         Some(b'+') => Ok(Some(cur_line[1..].to_string())),
@@ -62,7 +62,7 @@ where
             }
             let num = num as usize;
             let mut buf = vec![0u8; num + 2];
-            read.read_exact(&mut buf).await.expect("decode_response2");
+            read.read_exact(&mut buf).await?;
             if &buf[num..] != b"\r\n" {
                 bail!(format!("decode_response3:{:?}", buf))
             }
@@ -74,7 +74,7 @@ where
 
             for _ in 0..count {
                 line.clear();
-                read.read_line(&mut line).await.expect("decode_response4");
+                read.read_line(&mut line).await?;
                 let cur_line = line.trim_end_matches("\r\n");
 
                 match cur_line.as_bytes().first() {
@@ -87,7 +87,7 @@ where
                         }
                         let num = num as usize;
                         let mut buf = vec![0u8; num + 2];
-                        read.read_exact(&mut buf).await.expect("decode_response5");
+                        read.read_exact(&mut buf).await?;
                         if &buf[num..] != b"\r\n" {
                             bail!(format!("decode_response6:{:?}", buf))
                         }
@@ -208,6 +208,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decode_request_returns_error_on_unexpected_eof() {
+        let err = decode_request_from(b"*1\r\n$3\r\nab").await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
     async fn decode_response_accepts_bulk_string_boundaries() {
         let empty_bulk = decode_response_from(b"$0\r\n\r\n").await.unwrap();
         assert_eq!(empty_bulk, Some("".to_string()));
@@ -225,6 +231,12 @@ mod tests {
     #[tokio::test]
     async fn decode_response_rejects_bulk_string_without_crlf_suffix() {
         let err = decode_response_from(b"$3\r\nabcxx").await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn decode_response_returns_error_on_unexpected_eof() {
+        let err = decode_response_from(b"$3\r\nab").await;
         assert!(err.is_err());
     }
 

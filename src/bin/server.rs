@@ -143,7 +143,10 @@ async fn main() {
                         response = dispatch(cur_db.clone(), text.clone()).await;
                     }
 
-                    writer.write_all(response.as_bytes()).await.expect("main");
+                    if let Err(e) = writer.write_all(response.as_bytes()).await {
+                        eprintln!("write response error:{addr},{e}");
+                        break;
+                    }
                 }
             }
         });
