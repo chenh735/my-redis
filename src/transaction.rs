@@ -83,7 +83,6 @@ impl Transaction {
             return error(err);
         }
 
-        // TODO!: Add command pre-validation while queuing so EXEC can reject bad commands before mutating any key.
         self.queued
             .as_mut()
             .expect("transaction is active")
