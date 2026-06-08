@@ -11,6 +11,14 @@ pub struct ServerConfig {
     pub aof_incr_path: String,
     pub aof_flush_sec: u64,
     pub rdb_save_sec: u64,
+    pub idle_timeout_sec: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerConfigOverrides {
+    pub addr: Option<String>,
+    pub port: Option<u16>,
+    pub idle_timeout_sec: Option<u64>,
 }
 
 impl Default for ServerConfig {
@@ -23,6 +31,7 @@ impl Default for ServerConfig {
             aof_incr_path: "appendonly.aof.incr".to_string(),
             aof_flush_sec: 2,
             rdb_save_sec: 60,
+            idle_timeout_sec: 300,
         }
     }
 }
@@ -65,11 +74,27 @@ impl ServerConfig {
                 "appendincrfilename" => config.aof_incr_path = value.to_string(),
                 "appendfsync-seconds" => config.aof_flush_sec = parse_seconds(value, index + 1)?,
                 "save-seconds" => config.rdb_save_sec = parse_seconds(value, index + 1)?,
+                "idle-timeout-seconds" => {
+                    config.idle_timeout_sec = parse_seconds(value, index + 1)?
+                }
                 _ => bail!("unknown config key on line {}: {key}", index + 1),
             }
         }
 
         Ok(config)
+    }
+
+    /// Applies command-line values after loading the file-based configuration.
+    pub fn apply_overrides(&mut self, overrides: ServerConfigOverrides) {
+        if let Some(addr) = overrides.addr {
+            self.addr = addr;
+        }
+        if let Some(port) = overrides.port {
+            self.port = port;
+        }
+        if let Some(idle_timeout_sec) = overrides.idle_timeout_sec {
+            self.idle_timeout_sec = idle_timeout_sec;
+        }
     }
 }
 
@@ -93,7 +118,7 @@ fn parse_seconds(value: &str, line: usize) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::ServerConfig;
+    use super::{ServerConfig, ServerConfigOverrides};
 
     #[test]
     fn parse_accepts_redis_style_config() {
@@ -108,6 +133,7 @@ mod tests {
             appendincrfilename data.aof.incr
             appendfsync-seconds 1
             save-seconds 30
+            idle-timeout-seconds 10
             "#,
         )
         .unwrap();
@@ -119,11 +145,52 @@ mod tests {
         assert_eq!(config.aof_incr_path, "data.aof.incr");
         assert_eq!(config.aof_flush_sec, 1);
         assert_eq!(config.rdb_save_sec, 30);
+        assert_eq!(config.idle_timeout_sec, 10);
     }
 
     #[test]
     fn parse_rejects_unknown_config_key() {
         let err = ServerConfig::parse("unknown yes").unwrap_err();
         assert!(err.to_string().contains("unknown config key"));
+    }
+
+    #[test]
+    fn apply_overrides_updates_command_line_values() {
+        let mut config = ServerConfig::parse(
+            r#"
+            bind 127.0.0.1
+            port 6379
+            idle-timeout-seconds 300
+            "#,
+        )
+        .unwrap();
+
+        config.apply_overrides(ServerConfigOverrides {
+            addr: Some("0.0.0.0".to_string()),
+            port: Some(6380),
+            idle_timeout_sec: Some(10),
+        });
+
+        assert_eq!(config.addr, "0.0.0.0");
+        assert_eq!(config.port, 6380);
+        assert_eq!(config.idle_timeout_sec, 10);
+    }
+
+    #[test]
+    fn apply_overrides_keeps_file_values_when_missing() {
+        let mut config = ServerConfig::parse(
+            r#"
+            bind 127.0.0.1
+            port 6379
+            idle-timeout-seconds 300
+            "#,
+        )
+        .unwrap();
+
+        config.apply_overrides(ServerConfigOverrides::default());
+
+        assert_eq!(config.addr, "127.0.0.1");
+        assert_eq!(config.port, 6379);
+        assert_eq!(config.idle_timeout_sec, 300);
     }
 }

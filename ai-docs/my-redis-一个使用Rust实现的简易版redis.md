@@ -31,6 +31,8 @@ categories:
 - RDB + AOF 混合持久化和启动恢复
 - `MULTI` / `EXEC` / `DISCARD` 简化事务
 - `redis.conf` 配置文件
+- 命令行可选日志功能
+- 空闲 TCP 连接超时主动断开
 - 基础 Redis 命令和 Set 集合运算命令
 - 压力测试工具，支持多连接并发、pipeline 和多种 workload
 
@@ -47,6 +49,8 @@ categories:
 - 实现 RDB 快照、AOF 增量日志和混合持久化恢复
 - 实现简化事务队列，支持命令入队、统一执行和事务预校验
 - 实现配置文件解析，将监听地址、端口和持久化参数从代码中解耦
+- 实现可选日志功能，用于定位服务端连接、持久化和网络读写问题
+- 实现空闲 TCP 连接超时机制，避免无请求连接长期占用服务端资源
 - 编写单元测试，覆盖 DB 层、命令层、RESP 协议、事务和持久化逻辑
 - 实现压力测试工具，覆盖基础命令、String、List、Set、Hash 和混合高级场景
 - 持续扩展命令能力，例如 `STRLEN`、`APPEND`、`HLEN`、`HKEYS`、`HVALS`、`SINTER`、`SUNION`、`SDIFF`
@@ -265,18 +269,95 @@ appendfilename appendonly.aof
 appendincrfilename appendonly.aof.incr
 appendfsync-seconds 2
 save-seconds 60
+idle-timeout-seconds 300
 ```
 
-服务启动时默认读取 `redis.conf`。如果配置文件不存在，则使用 `ServerConfig::default()` 中的默认配置。命令行参数仍然可以覆盖地址和端口：
+服务启动时默认读取 `redis.conf`。如果配置文件不存在，则使用 `ServerConfig::default()` 中的默认配置。命令行参数仍然可以覆盖地址、端口和空闲连接超时时间：
 
 ```powershell
 cargo run --bin server -- --config redis.conf
-cargo run --bin server -- --addr 0.0.0.0 --port 6380
+cargo run --bin server -- --addr 0.0.0.0 --port 6380 --idle-timeout-seconds 60
 ```
 
 配置解析的思路比较简单：逐行读取，去掉注释和空行，然后按 `key value` 的形式写入配置结构体。
 
-### 7. 事务功能
+### 7. 日志功能
+
+随着服务端功能变多，仅靠 `println!` 和 `eprintln!` 很难定位高并发下的连接问题和持久化错误。因此我增加了一个轻量日志模块 `logger`，复用项目已有的 `log` crate，不额外引入新的运行时依赖。
+
+服务端默认不启用日志，避免普通运行时输出过多信息。需要排查问题时，可以通过命令行参数开启：
+
+```powershell
+cargo run --bin server -- --log
+cargo run --bin server -- --log --log-level debug
+```
+
+当前支持的日志级别包括：
+
+```text
+error / warn / info / debug / trace
+```
+
+日志开启后，会记录服务端关键生命周期和错误信息，例如：
+
+- 服务启动地址
+- 持久化加载完成
+- 客户端连接和断开
+- RESP 请求解析错误
+- AOF append / flush 错误
+- RDB + AOF 混合快照错误
+- 写响应失败
+
+示例输出：
+
+```text
+[INFO server] server started at 127.0.0.1:6379
+[INFO server] persistence loaded, active AOF path: appendonly.aof
+[DEBUG server] client connected: 127.0.0.1:52130
+```
+
+这个功能在高并发压测时尤其有用。比如客户端异常断开、Windows socket 资源耗尽、写响应失败等问题，都可以通过日志快速定位到服务端连接生命周期中的具体阶段。
+
+### 8. 空闲连接超时
+
+TCP 服务端还有一个容易被忽略的问题：客户端连接建立后，如果长时间不发送任何请求，服务端会一直保留这个连接任务和 socket 资源。在普通测试里这不明显，但在压测或异常客户端场景下，空闲连接过多会影响服务端可用性。
+
+为了解决这个问题，我为服务端增加了空闲连接超时机制。配置项如下：
+
+```conf
+idle-timeout-seconds 300
+```
+
+也可以通过命令行覆盖：
+
+```powershell
+cargo run --bin server -- --idle-timeout-seconds 60
+```
+
+其中 `0` 表示禁用空闲连接超时：
+
+```powershell
+cargo run --bin server -- --idle-timeout-seconds 0
+```
+
+实现上没有引入新依赖，而是使用 Tokio 自带的 `timeout` 包装每次请求读取：
+
+```rust
+match timeout(duration, decode_request(reader)).await {
+    Ok(request) => request.map(RequestRead::Request),
+    Err(_) => Ok(RequestRead::IdleTimeout),
+}
+```
+
+也就是说，服务端不是限制一个连接最多存在多久，而是限制“距离上一条请求之后，最多可以空闲多久”。如果客户端在超时时间内发送了请求，连接会继续保留；如果一直不发请求，服务端会主动断开当前连接，并在开启日志时输出：
+
+```text
+[INFO server] idle client disconnected: 127.0.0.1:52130
+```
+
+这个功能可以减少空闲连接长期占用资源，也让服务端在异常客户端或连接泄漏场景下更稳。
+
+### 9. 事务功能
 
 事务功能实现了简化版：
 
@@ -296,7 +377,7 @@ EXEC
 
 执行结果中，`SET` 和 `GET` 会在 `EXEC` 阶段统一执行，并以 RESP Array 的形式返回每条命令的结果。事务中的写命令也只会在 `EXEC` 真正执行成功后写入 AOF。如果事务中包含 `BGSAVE`，也会等到 `EXEC` 阶段再触发 RDB + AOF 混合快照。
 
-### 8. 压力测试工具
+### 10. 压力测试工具
 
 在功能基本完成后，我又补充了一个独立的压力测试工具 `stress`。它不是直接调用内部函数，而是像真实客户端一样通过 TCP 连接服务端，并使用 RESP 协议发送请求。这样可以覆盖完整链路：
 
@@ -698,6 +779,8 @@ cargo run --bin client -- --cmd "SDIFF a b"
 - RDB、AOF 和混合持久化恢复
 - 事务入队、执行、取消和预校验
 - 配置文件解析
+- 日志级别解析和服务端日志参数解析
+- 空闲连接超时配置、参数解析和读取超时逻辑
 - key 过期逻辑
 - Set 集合运算逻辑
 - 压力测试工具的命令生成、pipeline 执行和统计逻辑
@@ -711,7 +794,7 @@ cargo test
 结果为：
 
 ```text
-47 个 lib 测试通过，9 个 stress 工具测试通过
+49 个 lib 测试通过，5 个 server 参数/空闲超时测试通过，9 个 stress 工具测试通过
 ```
 
 ## 总结

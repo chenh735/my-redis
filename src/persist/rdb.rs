@@ -142,7 +142,7 @@ pub fn tick_hybrid_snapshot(
             )
             .await
             {
-                eprintln!("hybrid snapshot error: {e}");
+                log::error!("hybrid snapshot error: {e}");
             }
         }
     });

@@ -10,6 +10,8 @@
 
 ```powershell
 cargo run --bin server -- --addr 127.0.0.1 --port 6379
+cargo run --bin server -- --log --log-level debug
+cargo run --bin server -- --idle-timeout-seconds 60
 cargo run --bin client -- --cmd "PING"
 cargo run --bin stress -- --addr 127.0.0.1:6379 --clients 50 --requests 10000 --pipeline 10 --workload ping
 ```

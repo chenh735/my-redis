@@ -16,6 +16,8 @@
 - 支持 `BGSAVE` 手动保存快照
 - 支持 `MULTI` / `EXEC` / `DISCARD` 简化事务
 - 支持 `redis.conf` 配置文件
+- 支持通过命令行参数开启服务端日志
+- 支持空闲 TCP 连接超时主动断开
 - 支持压力测试工具，可覆盖基础命令、String、List、Set、Hash 和混合场景
 
 ## 快速开始
@@ -41,6 +43,18 @@ cargo run --bin server -- --addr 127.0.0.1 --port 6380
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "PING"
 ```
 
+开启服务端日志：
+
+```powershell
+cargo run --bin server -- --log --log-level debug
+```
+
+覆盖空闲连接超时时间：
+
+```powershell
+cargo run --bin server -- --idle-timeout-seconds 60
+```
+
 ## 配置文件
 
 服务端默认读取 `redis.conf`。如果文件不存在，会使用代码中的默认配置。
@@ -60,6 +74,9 @@ appendincrfilename appendonly.aof.incr
 # Seconds. Set to 0 to disable the background task.
 appendfsync-seconds 2
 save-seconds 60
+
+# Seconds. Set to 0 to disable idle connection timeout.
+idle-timeout-seconds 300
 ```
 
 指定配置文件：
@@ -68,10 +85,10 @@ save-seconds 60
 cargo run --bin server -- --config redis.conf
 ```
 
-命令行参数可以覆盖配置文件里的地址和端口：
+命令行参数可以覆盖配置文件里的地址、端口和空闲连接超时时间：
 
 ```powershell
-cargo run --bin server -- --config redis.conf --addr 0.0.0.0 --port 6380
+cargo run --bin server -- --config redis.conf --addr 0.0.0.0 --port 6380 --idle-timeout-seconds 60
 ```
 
 ## 支持的命令
@@ -383,7 +400,7 @@ cargo test
 当前测试结果：
 
 ```text
-47 个 lib 测试通过，9 个 stress 工具测试通过
+49 个 lib 测试通过，5 个 server 参数/空闲超时测试通过，9 个 stress 工具测试通过
 ```
 
 常用测试命令：
@@ -424,6 +441,10 @@ my-redis
     │   ├── README.md
     │   ├── mod.rs
     │   └── db.rs
+    ├── logger
+    │   ├── README.md
+    │   ├── mod.rs
+    │   └── logger.rs
     ├── persist
     │   ├── README.md
     │   ├── mod.rs

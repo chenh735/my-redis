@@ -161,7 +161,7 @@ pub fn tick_flush(sec: u64, aof: Arc<Mutex<Aof>>) {
         loop {
             interval.tick().await;
             if let Err(e) = aof.lock().await.flush().await {
-                eprintln!("AOF flush error: {e}");
+                log::error!("AOF flush error: {e}");
             };
         }
     });

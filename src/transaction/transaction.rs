@@ -148,7 +148,7 @@ async fn execute_commands(
                     bgsave_count += 1;
                 } else if is_write_command(&command) {
                     if let Err(e) = aof.append(&command).await {
-                        eprintln!("AOF append error:{e}");
+                        log::error!("AOF append error: {e}");
                         response = error("persistence error".to_string());
                     }
                 }
@@ -172,7 +172,7 @@ async fn execute_commands(
             )
             .await
             {
-                eprintln!("hybrid snapshot error:{e}");
+                log::error!("hybrid snapshot error: {e}");
             }
         });
     }
