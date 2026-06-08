@@ -408,23 +408,34 @@ my-redis
 └── src
     ├── lib.rs
     ├── bin
+    │   ├── README.md
     │   ├── client.rs
     │   ├── server.rs
     │   └── stress.rs
     ├── cmd
+    │   ├── README.md
     │   ├── mod.rs
     │   └── cmd.rs
-    ├── config.rs
+    ├── config
+    │   ├── README.md
+    │   ├── mod.rs
+    │   └── config.rs
     ├── db
+    │   ├── README.md
     │   ├── mod.rs
     │   └── db.rs
     ├── persist
+    │   ├── README.md
     │   ├── mod.rs
     │   ├── parse.rs
     │   ├── aof.rs
     │   └── rdb.rs
     ├── resp
+    │   ├── README.md
     │   ├── mod.rs
     │   └── resp.rs
-    └── transaction.rs
+    └── transaction
+        ├── README.md
+        ├── mod.rs
+        └── transaction.rs
 ```

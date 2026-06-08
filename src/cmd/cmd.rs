@@ -87,7 +87,6 @@ pub fn validate_command(args: &[String]) -> Result<(), String> {
         "bgsave" => {
             if args.len() == 1 {
                 Ok(())
-                
             } else {
                 Err("syntax error".to_string())
             }
