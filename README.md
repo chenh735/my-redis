@@ -28,6 +28,12 @@
 cargo run
 ```
 
+也可以使用 `make` 启动服务端：
+
+```powershell
+make
+```
+
 使用客户端发送命令：
 
 ```powershell
@@ -43,16 +49,72 @@ cargo run --bin server -- --addr 127.0.0.1 --port 6380
 cargo run --bin client -- --addr 127.0.0.1:6380 --cmd "PING"
 ```
 
+对应的 `make` 命令：
+
+```powershell
+make server PORT=6380
+make client CLIENT_ADDR=127.0.0.1:6380 CMD="PING"
+```
+
 开启服务端日志：
 
 ```powershell
 cargo run --bin server -- --log --log-level debug
 ```
 
+使用 `make` 开启日志：
+
+```powershell
+make server-log LOG_LEVEL=debug
+```
+
 覆盖空闲连接超时时间：
 
 ```powershell
 cargo run --bin server -- --idle-timeout-seconds 60
+```
+
+使用 `make` 覆盖空闲连接超时时间：
+
+```powershell
+make server IDLE_TIMEOUT_SECONDS=60
+```
+
+## Docker 部署
+
+项目提供 `Dockerfile`，镜像内会编译 `server`、`client` 和 `stress` 三个二进制文件。容器启动时服务端会监听 `0.0.0.0:6379`，这样宿主机可以通过端口映射访问。
+
+构建镜像：
+
+```powershell
+docker build -t my-redis .
+```
+
+运行服务端：
+
+```powershell
+docker run --rm --name my-redis -p 6379:6379 -v redis-data:/data my-redis
+```
+
+也可以使用 `make`：
+
+```powershell
+make docker-build
+make docker-run
+```
+
+连接容器中的服务端：
+
+```powershell
+cargo run --bin client -- --addr 127.0.0.1:6379 --cmd "PING"
+```
+
+持久化文件会写入容器内 `/data` 目录。上面的 `-v redis-data:/data` 会把 RDB 和 AOF 保存到 Docker volume，避免容器删除后数据丢失。
+
+停止容器：
+
+```powershell
+docker stop my-redis
 ```
 
 ## 配置文件

@@ -1,0 +1,10 @@
+target
+.git
+.gitignore
+ai-docs
+*.rdb
+*.aof
+*.aof.incr
+Dockerfile
+README.md
+Makefile
