@@ -18,6 +18,7 @@
 - 支持 `redis.conf` 配置文件
 - 支持通过命令行参数开启服务端日志
 - 支持空闲 TCP 连接超时主动断开
+- 客户端支持交互式多命令模式，同一个 TCP 连接内可连续发送命令
 - 支持压力测试工具，可覆盖基础命令、String、List、Set、Hash 和混合场景
 
 ## 快速开始
@@ -41,6 +42,24 @@ cargo run --bin client -- --cmd "PING"
 cargo run --bin client -- --cmd "SET name redis"
 cargo run --bin client -- --cmd "GET name"
 ```
+
+启动交互式客户端，复用同一个 TCP 连接连续发送命令：
+
+```powershell
+cargo run --bin client
+```
+
+示例输入：
+
+```text
+my-redis> PING
+my-redis> SET name redis
+my-redis> GET name
+my-redis> help
+my-redis> exit
+```
+
+`help` 会显示服务端支持的所有命令；`exit` 会断开当前 TCP 连接并退出客户端。
 
 指定地址和端口：
 
@@ -281,7 +300,11 @@ EXEC
 
 如果入队阶段发现命令不存在或参数错误，事务会被标记为 dirty。之后执行 `EXEC` 时会返回 `EXECABORT`，并且不会执行队列中已经入队的命令。
 
-注意：当前命令行客户端每次只发送一条命令并断开连接，而事务状态绑定在单个 TCP 连接上。因此事务更适合通过持久连接客户端或单元测试验证。
+事务状态绑定在单个 TCP 连接上。使用交互式客户端可以在同一连接内连续输入 `MULTI`、普通命令和 `EXEC`：
+
+```powershell
+cargo run --bin client
+```
 
 ## 类型检查
 

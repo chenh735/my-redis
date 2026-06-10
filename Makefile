@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := server
 
-.PHONY: server server-log client stress test fmt build docker-build docker-run docker-stop clean help
+.PHONY: server server-log client client-shell stress test fmt build docker-build docker-run docker-stop clean help
 
 ADDR ?= 127.0.0.1
 PORT ?= 6379
@@ -33,6 +33,9 @@ server-log:
 client:
 	cargo run --bin client -- --addr $(CLIENT_ADDR) --cmd "$(CMD)"
 
+client-shell:
+	cargo run --bin client -- --addr $(CLIENT_ADDR)
+
 stress:
 	cargo run --bin stress -- --addr $(CLIENT_ADDR) --clients $(CLIENTS) --requests $(REQUESTS) --pipeline $(PIPELINE) --workload $(WORKLOAD) --key-space $(KEY_SPACE) --value-size $(VALUE_SIZE) --key-prefix $(KEY_PREFIX)
 
@@ -63,6 +66,7 @@ help:
 	@echo "  make server                  Start server"
 	@echo "  make server-log LOG_LEVEL=debug"
 	@echo "  make client CMD=\"PING\""
+	@echo "  make client-shell"
 	@echo "  make stress WORKLOAD=advanced CLIENTS=50 REQUESTS=20000"
 	@echo "  make test"
 	@echo "  make fmt"
