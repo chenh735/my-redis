@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 
 #[derive(Debug, Parser)]
 struct Args {
-    // Server address.
+    // 服务端地址。
     #[arg(long, default_value = "127.0.0.1:6379")]
     addr: String,
 
@@ -117,7 +117,7 @@ fn print_help() {
     println!("{HELP_TEXT}");
 }
 
-/// Converts a text command or raw RESP command into bytes sent to the server.
+/// 将文本命令或原始 RESP 命令转换为发送给服务端的字节内容。
 fn build_request(command: &str) -> Result<Option<String>> {
     if command.trim_start().starts_with('*') && command.ends_with("\r\n") {
         return Ok(Some(command.to_string()));
@@ -131,7 +131,7 @@ fn build_request(command: &str) -> Result<Option<String>> {
     encode_request(command.split_whitespace().map(|s| s.to_string()).collect())
 }
 
-/// Sends one command on the current TCP connection and waits for one response.
+/// 在当前 TCP 连接上发送一条命令，并等待一条响应。
 async fn execute_command<R, W>(
     reader: &mut BufReader<R>,
     writer: &mut W,
@@ -161,7 +161,7 @@ where
     Ok(ClientCommandResult::Response(resp))
 }
 
-/// Runs an interactive client loop until stdin closes or the user enters `exit`.
+/// 运行交互式客户端循环，直到标准输入关闭或用户输入 `exit`。
 async fn run_interactive<R, W, I>(
     reader: &mut BufReader<R>,
     writer: &mut W,

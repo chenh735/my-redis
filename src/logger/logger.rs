@@ -56,7 +56,7 @@ impl Log for SimpleLogger {
     fn flush(&self) {}
 }
 
-/// Initializes process-wide logging when the server is started with logging enabled.
+/// 在服务端开启日志时初始化进程级日志。
 pub fn init_logging(enabled: bool, level: LogLevelArg) -> Result<()> {
     if !enabled {
         log::set_max_level(LevelFilter::Off);

@@ -84,7 +84,7 @@ impl ServerConfig {
         Ok(config)
     }
 
-    /// Applies command-line values after loading the file-based configuration.
+    /// 在加载配置文件后应用命令行覆盖参数。
     pub fn apply_overrides(&mut self, overrides: ServerConfigOverrides) {
         if let Some(addr) = overrides.addr {
             self.addr = addr;

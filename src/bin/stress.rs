@@ -9,35 +9,35 @@ use tokio::task::JoinSet;
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Run a TCP/RESP stress test against my-redis")]
 struct Args {
-    // Server address, for example 127.0.0.1:6379.
+    // 服务端地址，例如 127.0.0.1:6379。
     #[arg(long, default_value = "127.0.0.1:6379")]
     addr: String,
 
-    // Number of concurrent client connections.
+    // 并发客户端连接数量。
     #[arg(short, long, default_value_t = 50)]
     clients: usize,
 
-    // Total number of requests across all clients.
+    // 所有客户端合计发送的请求总数。
     #[arg(short, long, default_value_t = 10000)]
     requests: usize,
 
-    // Number of requests sent before reading responses on each connection.
+    // 每个连接读取响应前批量发送的请求数量。
     #[arg(short, long, default_value_t = 1)]
     pipeline: usize,
 
-    // Number of distinct keys used by stateful workloads.
+    // 有状态压测场景使用的不同 key 数量。
     #[arg(long, default_value_t = 1000)]
     key_space: usize,
 
-    // Value size in bytes for write requests.
+    // 写请求中 value 的字节大小。
     #[arg(long, default_value_t = 16)]
     value_size: usize,
 
-    // Key prefix used by stateful workloads.
+    // 有状态压测场景使用的 key 前缀。
     #[arg(long, default_value = "myredis:stress")]
     key_prefix: String,
 
-    // Workload to execute.
+    // 要执行的压测场景。
     #[arg(long, value_enum, default_value_t = Workload::Ping)]
     workload: Workload,
 }

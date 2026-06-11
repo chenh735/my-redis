@@ -185,7 +185,7 @@ async fn main() {
     }
 }
 
-/// Converts zero to disabled timeout and positive seconds to a Tokio timeout duration.
+/// 将 0 转换为禁用超时，将正数秒转换为 Tokio 超时时长。
 fn idle_timeout_duration(seconds: u64) -> Option<Duration> {
     if seconds == 0 {
         None
@@ -194,7 +194,7 @@ fn idle_timeout_duration(seconds: u64) -> Option<Duration> {
     }
 }
 
-/// Reads one RESP request and returns IdleTimeout when the connection stays silent too long.
+/// 读取一条 RESP 请求，并在连接空闲过久时返回 IdleTimeout。
 async fn read_request<R>(
     reader: &mut BufReader<R>,
     idle_timeout: Option<Duration>,
